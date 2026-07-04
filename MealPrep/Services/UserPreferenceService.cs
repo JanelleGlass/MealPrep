@@ -39,4 +39,10 @@ public class UserPreferenceService
         var value = await GetAsync(key);
         return value is not null ? value == "true" : defaultValue;
     }
+
+    public async Task<decimal> GetDecimalAsync(string key, decimal defaultValue = 0)
+    {
+        var value = await GetAsync(key);
+        return value is not null && decimal.TryParse(value, out var d) ? d : defaultValue;
+    }
 }

@@ -37,6 +37,48 @@
     </div>
 
     <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white">Daily Log Targets</div>
+        <div class="card-body">
+            <p class="card-text">Daily nutrition goals shown as rings on the Daily Log page.</p>
+            <div class="row g-2 mb-3">
+                <div class="col-6 col-md-3">
+                    <label class="form-label">Calories min</label>
+                    <input type="number" class="form-control" min="0" @bind="_logCalMin" />
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">Calories max</label>
+                    <input type="number" class="form-control" min="0" @bind="_logCalMax" />
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">Protein min (g)</label>
+                    <input type="number" class="form-control" min="0" @bind="_logProteinMin" />
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">Protein max (g)</label>
+                    <input type="number" class="form-control" min="0" @bind="_logProteinMax" />
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">Fiber target (g)</label>
+                    <input type="number" class="form-control" min="0" @bind="_logFiber" />
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">Iron target (mg)</label>
+                    <input type="number" class="form-control" min="0" @bind="_logIron" />
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">Low-intake floor (cal)</label>
+                    <input type="number" class="form-control" min="0" @bind="_logLowFloor" />
+                </div>
+            </div>
+            <button class="btn btn-success" @onclick="SaveLogTargets">💾 Save</button>
+            @if (!string.IsNullOrEmpty(_logTargetsMessage))
+            {
+                <span class="ms-2 text-success">@_logTargetsMessage</span>
+            }
+        </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
         <div class="card-header bg-primary text-white">GitHub Backup</div>
         <div class="card-body">
             <p class="card-text">Configure your GitHub repository for data sync. Requires a Personal Access Token with <code>repo</code> scope.</p>
@@ -72,11 +114,21 @@
     private string _gitPath = "mealprep-backup";
     private string? _gitMessage;
 
+    private decimal _logCalMin, _logCalMax, _logProteinMin, _logProteinMax, _logFiber, _logIron, _logLowFloor;
+    private string? _logTargetsMessage;
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
             _isDark = await PrefService.GetBoolAsync("DarkMode");
+            _logCalMin = await PrefService.GetDecimalAsync("LogCalMin", 1700);
+            _logCalMax = await PrefService.GetDecimalAsync("LogCalMax", 1950);
+            _logProteinMin = await PrefService.GetDecimalAsync("LogProteinMin", 130);
+            _logProteinMax = await PrefService.GetDecimalAsync("LogProteinMax", 145);
+            _logFiber = await PrefService.GetDecimalAsync("LogFiberTarget", 30);
+            _logIron = await PrefService.GetDecimalAsync("LogIronTarget", 18);
+            _logLowFloor = await PrefService.GetDecimalAsync("LogLowIntakeFloor", 1600);
             _currencySymbol = await JS.InvokeAsync<string>("currencySymbol.get");
             var settings = await JS.InvokeAsync<GitSettings>("gitBackup.get");
             _gitRepo = settings.Repo ?? "";
@@ -103,6 +155,18 @@
     {
         await JS.InvokeVoidAsync("gitBackup.set", _gitRepo, _gitToken, _gitPath);
         _gitMessage = "Settings saved.";
+    }
+
+    private async Task SaveLogTargets()
+    {
+        await PrefService.SetAsync("LogCalMin", _logCalMin.ToString());
+        await PrefService.SetAsync("LogCalMax", _logCalMax.ToString());
+        await PrefService.SetAsync("LogProteinMin", _logProteinMin.ToString());
+        await PrefService.SetAsync("LogProteinMax", _logProteinMax.ToString());
+        await PrefService.SetAsync("LogFiberTarget", _logFiber.ToString());
+        await PrefService.SetAsync("LogIronTarget", _logIron.ToString());
+        await PrefService.SetAsync("LogLowIntakeFloor", _logLowFloor.ToString());
+        _logTargetsMessage = "Targets saved.";
     }
 
     private record GitSettings(string? Repo, string? Token, string? Path);

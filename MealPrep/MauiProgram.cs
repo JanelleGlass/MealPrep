@@ -35,6 +35,8 @@ public static class MauiProgram
         builder.Services.AddScoped<PriceScraperService>();
         builder.Services.AddScoped<NutritionService>();
         builder.Services.AddScoped<AnalyticsService>();
+        builder.Services.AddScoped<FoodLogService>();
+        builder.Services.AddScoped<BodyMeasurementService>();
 
         var app = builder.Build();
 
@@ -168,6 +170,66 @@ public static class MauiProgram
                 db.Database.ExecuteSqlRaw(@"ALTER TABLE Ingredients ADD COLUMN NutritionId INTEGER REFERENCES Nutritions(Id);");
             }
             catch { /* Column already exists */ }
+
+            // Manual migration: create FoodLogEntries table (Daily Log feature)
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS FoodLogEntries (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Date TEXT NOT NULL,
+                    Name TEXT NOT NULL,
+                    Calories TEXT NOT NULL DEFAULT '0',
+                    ProteinG TEXT NOT NULL DEFAULT '0',
+                    FiberG TEXT,
+                    IronMg TEXT,
+                    IsPlant INTEGER NOT NULL DEFAULT 0,
+                    IngredientId INTEGER REFERENCES Ingredients(Id) ON DELETE SET NULL,
+                    CreatedAt TEXT NOT NULL
+                );
+            ");
+            db.Database.ExecuteSqlRaw(@"
+                CREATE INDEX IF NOT EXISTS IX_FoodLogEntries_Date
+                ON FoodLogEntries (Date);
+            ");
+
+            // Manual migration: create BodyMeasurements table
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS BodyMeasurements (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Date TEXT NOT NULL,
+                    WaistIn TEXT NOT NULL DEFAULT '0',
+                    HeightIn TEXT NOT NULL DEFAULT '0'
+                );
+            ");
+            db.Database.ExecuteSqlRaw(@"
+                CREATE INDEX IF NOT EXISTS IX_BodyMeasurements_Date
+                ON BodyMeasurements (Date);
+            ");
+
+            // Manual migration: create QuickAddItems table
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS QuickAddItems (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Name TEXT NOT NULL,
+                    Calories TEXT NOT NULL DEFAULT '0',
+                    ProteinG TEXT NOT NULL DEFAULT '0',
+                    FiberG TEXT NOT NULL DEFAULT '0',
+                    IronMg TEXT NOT NULL DEFAULT '0',
+                    IsPlant INTEGER NOT NULL DEFAULT 0,
+                    SortOrder INTEGER NOT NULL DEFAULT 0
+                );
+            ");
+
+            // Seed default quick-add items on first run
+            db.Database.ExecuteSqlRaw(@"
+                INSERT INTO QuickAddItems (Name, Calories, ProteinG, FiberG, IronMg, IsPlant, SortOrder)
+                SELECT * FROM (
+                    SELECT 'Protein coffee (1 scoop + milk)' AS Name, '170' AS Calories, '24' AS ProteinG, '0' AS FiberG, '0.2' AS IronMg, 0 AS IsPlant, 0 AS SortOrder
+                    UNION ALL SELECT 'Edamame, 1 cup', '190', '17', '8', '3.5', 1, 1
+                    UNION ALL SELECT 'Soft boiled egg', '70', '6', '0', '0.6', 0, 2
+                    UNION ALL SELECT 'Greek yogurt, 1/2 cup', '100', '10', '0', '0.1', 0, 3
+                )
+                WHERE NOT EXISTS (SELECT 1 FROM QuickAddItems);
+            ");
         }
 
         return app;

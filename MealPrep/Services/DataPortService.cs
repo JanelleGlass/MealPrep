@@ -31,7 +31,10 @@ public class DataPortService
             RecipeBookEntries = await db.RecipeBookEntries.AsNoTracking().ToListAsync(),
             MealRangeGroups = await db.MealRangeGroups.AsNoTracking().ToListAsync(),
             Stores = await db.Stores.AsNoTracking().ToListAsync(),
-            StoreProducts = await db.StoreProducts.AsNoTracking().ToListAsync()
+            StoreProducts = await db.StoreProducts.AsNoTracking().ToListAsync(),
+            FoodLogEntries = await db.FoodLogEntries.AsNoTracking().ToListAsync(),
+            BodyMeasurements = await db.BodyMeasurements.AsNoTracking().ToListAsync(),
+            QuickAddItems = await db.QuickAddItems.AsNoTracking().ToListAsync()
         };
 
         // Null out navigation properties to avoid circular references
@@ -44,6 +47,7 @@ public class DataPortService
         foreach (var rbe in export.RecipeBookEntries) { rbe.RecipeBook = null; rbe.Recipe = null; }
         foreach (var mrg in export.MealRangeGroups) mrg.Meal = null;
         foreach (var sp in export.StoreProducts) { sp.Store = null; sp.Ingredient = null; }
+        foreach (var fle in export.FoodLogEntries) fle.Ingredient = null;
 
         return JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
     }
@@ -104,6 +108,17 @@ public class DataPortService
         files["stores.json"] = JsonSerializer.Serialize(new StoresExport
         {
             Version = 1, ExportedAt = now, Stores = storesList, StoreProducts = storeProducts
+        }, opts);
+
+        // Daily log
+        var foodLogEntries = await db.FoodLogEntries.AsNoTracking().ToListAsync();
+        var bodyMeasurements = await db.BodyMeasurements.AsNoTracking().ToListAsync();
+        var quickAddItems = await db.QuickAddItems.AsNoTracking().ToListAsync();
+        foreach (var fle in foodLogEntries) fle.Ingredient = null;
+        files["daily-log.json"] = JsonSerializer.Serialize(new DailyLogExport
+        {
+            Version = 1, ExportedAt = now, FoodLogEntries = foodLogEntries,
+            BodyMeasurements = bodyMeasurements, QuickAddItems = quickAddItems
         }, opts);
 
         return files;
@@ -422,6 +437,9 @@ public class DataPortService
         try
         {
             // Clear all existing data in dependency order
+            db.FoodLogEntries.RemoveRange(await db.FoodLogEntries.ToListAsync());
+            db.BodyMeasurements.RemoveRange(await db.BodyMeasurements.ToListAsync());
+            db.QuickAddItems.RemoveRange(await db.QuickAddItems.ToListAsync());
             db.StoreProducts.RemoveRange(await db.StoreProducts.ToListAsync());
             db.Stores.RemoveRange(await db.Stores.ToListAsync());
             db.MealRangeGroups.RemoveRange(await db.MealRangeGroups.ToListAsync());
@@ -592,6 +610,32 @@ public class DataPortService
                 await db.SaveChangesAsync();
             }
 
+            // 6. Import daily log
+            if (files.TryGetValue("daily-log.json", out var dailyLogJson))
+            {
+                var data = JsonSerializer.Deserialize<DailyLogExport>(dailyLogJson)!;
+                foreach (var fle in data.FoodLogEntries)
+                {
+                    fle.Id = 0;
+                    fle.IngredientId = fle.IngredientId.HasValue && ingredientMap.ContainsKey(fle.IngredientId.Value)
+                        ? ingredientMap[fle.IngredientId.Value]
+                        : null;
+                    fle.Ingredient = null;
+                    db.FoodLogEntries.Add(fle);
+                }
+                foreach (var bm in data.BodyMeasurements)
+                {
+                    bm.Id = 0;
+                    db.BodyMeasurements.Add(bm);
+                }
+                foreach (var qa in data.QuickAddItems)
+                {
+                    qa.Id = 0;
+                    db.QuickAddItems.Add(qa);
+                }
+                await db.SaveChangesAsync();
+            }
+
             await transaction.CommitAsync();
         }
         catch
@@ -612,6 +656,9 @@ public class DataPortService
         try
         {
             // Clear all existing data in dependency order
+            db.FoodLogEntries.RemoveRange(await db.FoodLogEntries.ToListAsync());
+            db.BodyMeasurements.RemoveRange(await db.BodyMeasurements.ToListAsync());
+            db.QuickAddItems.RemoveRange(await db.QuickAddItems.ToListAsync());
             db.StoreProducts.RemoveRange(await db.StoreProducts.ToListAsync());
             db.Stores.RemoveRange(await db.Stores.ToListAsync());
             db.MealRangeGroups.RemoveRange(await db.MealRangeGroups.ToListAsync());
@@ -773,6 +820,39 @@ public class DataPortService
                 await db.SaveChangesAsync();
             }
 
+            // Insert daily log data
+            if (data.FoodLogEntries != null)
+            {
+                foreach (var fle in data.FoodLogEntries)
+                {
+                    fle.Id = 0;
+                    fle.IngredientId = fle.IngredientId.HasValue && ingredientMap.ContainsKey(fle.IngredientId.Value)
+                        ? ingredientMap[fle.IngredientId.Value]
+                        : null;
+                    fle.Ingredient = null;
+                    db.FoodLogEntries.Add(fle);
+                }
+                await db.SaveChangesAsync();
+            }
+            if (data.BodyMeasurements != null)
+            {
+                foreach (var bm in data.BodyMeasurements)
+                {
+                    bm.Id = 0;
+                    db.BodyMeasurements.Add(bm);
+                }
+                await db.SaveChangesAsync();
+            }
+            if (data.QuickAddItems != null)
+            {
+                foreach (var qa in data.QuickAddItems)
+                {
+                    qa.Id = 0;
+                    db.QuickAddItems.Add(qa);
+                }
+                await db.SaveChangesAsync();
+            }
+
             await transaction.CommitAsync();
         }
         catch
@@ -831,6 +911,18 @@ public class DataExport
     public List<MealRangeGroup>? MealRangeGroups { get; set; } = new();
     public List<Store>? Stores { get; set; } = new();
     public List<StoreProduct>? StoreProducts { get; set; } = new();
+    public List<FoodLogEntry>? FoodLogEntries { get; set; } = new();
+    public List<BodyMeasurement>? BodyMeasurements { get; set; } = new();
+    public List<QuickAddItem>? QuickAddItems { get; set; } = new();
+}
+
+public class DailyLogExport
+{
+    public int Version { get; set; }
+    public DateTime ExportedAt { get; set; }
+    public List<FoodLogEntry> FoodLogEntries { get; set; } = new();
+    public List<BodyMeasurement> BodyMeasurements { get; set; } = new();
+    public List<QuickAddItem> QuickAddItems { get; set; } = new();
 }
 
 public class MonthExport

@@ -1,0 +1,29 @@
+@* SVG progress ring ported from fieldlog's ringSVG() — no JS interop needed. *@
+
+<div class="text-center">
+    <svg width="@Size" height="@Size" viewBox="0 0 @Size @Size" style="display:block;margin:0 auto;">
+        <circle cx="@Half" cy="@Half" r="@Radius" fill="none" stroke="#d5d5d5" stroke-width="@Stroke" />
+        <circle cx="@Half" cy="@Half" r="@Radius" fill="none" stroke="@Color" stroke-width="@Stroke"
+                stroke-linecap="round"
+                stroke-dasharray="@Dash.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) @Circumference.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)"
+                transform="rotate(-90 @Half @Half)" />
+    </svg>
+    <div class="fw-bold font-monospace" style="font-size:14px;margin-top:4px;">@ValueText</div>
+    <div class="text-muted font-monospace" style="font-size:10px;">@TargetText</div>
+    <div class="text-muted text-uppercase" style="font-size:10px;letter-spacing:0.06em;margin-top:2px;">@Label</div>
+</div>
+
+@code {
+    [Parameter] public double Percent { get; set; }
+    [Parameter] public string Color { get; set; } = "#4F7358";
+    [Parameter] public string ValueText { get; set; } = "";
+    [Parameter] public string TargetText { get; set; } = "";
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public int Size { get; set; } = 64;
+    [Parameter] public int Stroke { get; set; } = 6;
+
+    private double Half => Size / 2.0;
+    private double Radius => (Size - Stroke) / 2.0;
+    private double Circumference => 2 * Math.PI * Radius;
+    private double Dash => Math.Min(Math.Max(Percent, 0), 1) * Circumference;
+}

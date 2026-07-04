@@ -19,6 +19,9 @@ public class MealPrepDbContext : DbContext
     public DbSet<Store> Stores => Set<Store>();
     public DbSet<StoreProduct> StoreProducts => Set<StoreProduct>();
     public DbSet<Nutrition> Nutritions => Set<Nutrition>();
+    public DbSet<FoodLogEntry> FoodLogEntries => Set<FoodLogEntry>();
+    public DbSet<BodyMeasurement> BodyMeasurements => Set<BodyMeasurement>();
+    public DbSet<QuickAddItem> QuickAddItems => Set<QuickAddItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -126,6 +129,28 @@ public class MealPrepDbContext : DbContext
             entity.Property(e => e.Price).HasColumnType("decimal(10,2)");
             entity.Property(e => e.PackageSize).HasColumnType("decimal(10,4)");
             entity.Property(e => e.PricePerUnit).HasColumnType("decimal(10,4)");
+        });
+
+        modelBuilder.Entity<FoodLogEntry>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Date).IsRequired();
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.HasOne(e => e.Ingredient).WithMany().HasForeignKey(e => e.IngredientId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(e => e.Date);
+        });
+
+        modelBuilder.Entity<BodyMeasurement>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Date).IsRequired();
+            entity.HasIndex(e => e.Date);
+        });
+
+        modelBuilder.Entity<QuickAddItem>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
         });
     }
 }

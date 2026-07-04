@@ -1,0 +1,450 @@
+@page "/dailylog"
+@using MealPrep.Data
+@using MealPrep.Services
+@inject FoodLogService FoodLog
+@inject BodyMeasurementService BodyService
+@inject UserPreferenceService PrefService
+
+<PageTitle>Daily Log</PageTitle>
+
+<div class="container-fluid py-3" style="max-width:720px;">
+
+    <!-- Day navigation -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-body d-flex justify-content-between align-items-center py-2">
+            <button class="btn btn-outline-secondary" @onclick="PrevDay">←</button>
+            <div class="text-center">
+                <div class="fw-bold fs-5">@_currentDate.ToString("dddd, MMM d")</div>
+                <small class="text-muted font-monospace">@(IsToday ? "today" : _currentDate.ToString("yyyy-MM-dd"))</small>
+            </div>
+            <button class="btn btn-outline-secondary" @onclick="NextDay">→</button>
+        </div>
+    </div>
+
+    <!-- Low intake flag -->
+    @if (ShowLowFlag)
+    {
+        <div class="alert alert-warning py-2" style="font-size:13px;">
+            Logged so far: <strong>@Math.Round(_totals.Cal) cal</strong>.
+            If the day's done, that's under your ~@((int)_lowFloor) soft floor — fine occasionally, but sustained
+            low days can disrupt cycles and recovery. If you're still eating, ignore this.
+        </div>
+    }
+
+    <!-- Ring gauges -->
+    <div class="row g-2 mb-3 text-center">
+        <div class="col-3">
+            <div class="card shadow-sm py-2 h-100">
+                <RingGauge Percent="@((double)(_calMax > 0 ? _totals.Cal / _calMax : 0))"
+                           Color="@CalColor"
+                           ValueText="@Math.Round(_totals.Cal).ToString()"
+                           TargetText="@($"{(int)_calMin}-{(int)_calMax}")"
+                           Label="cal" />
+            </div>
+        </div>
+        <div class="col-3">
+            <div class="card shadow-sm py-2 h-100">
+                <RingGauge Percent="@((double)(_proteinMax > 0 ? _totals.Protein / _proteinMax : 0))"
+                           Color="@ProteinColor"
+                           ValueText="@($"{Math.Round(_totals.Protein)}g")"
+                           TargetText="@($"{(int)_proteinMin}-{(int)_proteinMax}")"
+                           Label="protein" />
+            </div>
+        </div>
+        <div class="col-3">
+            <div class="card shadow-sm py-2 h-100">
+                <RingGauge Percent="@((double)(_fiberTarget > 0 ? _totals.Fiber / _fiberTarget : 0))"
+                           Color="#4F7358"
+                           ValueText="@($"{_totals.Fiber:F1}g")"
+                           TargetText="@($"/ {(int)_fiberTarget}g")"
+                           Label="fiber" />
+            </div>
+        </div>
+        <div class="col-3">
+            <div class="card shadow-sm py-2 h-100">
+                <RingGauge Percent="@((double)(_ironTarget > 0 ? _totals.Iron / _ironTarget : 0))"
+                           Color="#A6512F"
+                           ValueText="@($"{_totals.Iron:F1}mg")"
+                           TargetText="@($"/ {(int)_ironTarget}mg")"
+                           Label="iron" />
+            </div>
+        </div>
+    </div>
+
+    <!-- Weekly plants bar -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-body d-flex justify-content-between align-items-center py-2">
+            <span class="text-muted text-uppercase" style="font-size:11px;letter-spacing:0.06em;">Plant-tagged items, last 7 days</span>
+            <span class="fw-bold font-monospace" style="color:#C9A227;">@_weeklyPlants / 30</span>
+        </div>
+    </div>
+
+    <!-- Log an item -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-header bg-primary text-white">Log an item</div>
+        <div class="card-body">
+            <div class="mb-2">
+                <input type="text" class="form-control" placeholder="e.g. lentil grain bowl" @bind="_formName" />
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-3">
+                    <label class="form-label mb-0" style="font-size:10px;">CAL</label>
+                    <input type="number" class="form-control form-control-sm" min="0" step="1" @bind="_formCal" />
+                </div>
+                <div class="col-3">
+                    <label class="form-label mb-0" style="font-size:10px;">PROTEIN G</label>
+                    <input type="number" class="form-control form-control-sm" min="0" step="0.1" @bind="_formProtein" />
+                </div>
+                <div class="col-3">
+                    <label class="form-label mb-0" style="font-size:10px;">FIBER G</label>
+                    <input type="number" class="form-control form-control-sm" min="0" step="0.1" @bind="_formFiber" />
+                </div>
+                <div class="col-3">
+                    <label class="form-label mb-0" style="font-size:10px;">IRON MG</label>
+                    <input type="number" class="form-control form-control-sm" min="0" step="0.1" @bind="_formIron" />
+                </div>
+            </div>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="plantCheck" @bind="_formPlant" />
+                <label class="form-check-label" for="plantCheck" style="font-size:13px;">Counts toward 30 plants this week</label>
+            </div>
+            <button class="btn btn-dark w-100" @onclick="AddEntry" disabled="@(string.IsNullOrWhiteSpace(_formName))">+ Add to log</button>
+
+            @if (_quickItems.Count > 0)
+            {
+                <div class="d-flex flex-wrap gap-1 mt-2">
+                    @foreach (var q in _quickItems)
+                    {
+                        <button class="btn btn-sm btn-outline-secondary rounded-pill" style="font-size:12px;"
+                                @onclick="() => QuickAdd(q)">
+                            + @ShortName(q.Name)
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Entries -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-header bg-primary text-white">Entries this day</div>
+        <div class="card-body p-2">
+            @if (_entries.Count == 0)
+            {
+                <div class="text-center text-muted py-4">
+                    <div class="fw-bold">Nothing logged yet</div>
+                    <small>Add your first item above.</small>
+                </div>
+            }
+            else
+            {
+                @foreach (var e in _entries)
+                {
+                    <div class="d-flex align-items-center gap-2 border rounded p-2 mb-1">
+                        <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:@(e.IsPlant ? "#C9A227" : "transparent");"></span>
+                        <div class="flex-grow-1" style="min-width:0;">
+                            <div class="text-truncate" style="font-size:14px;font-weight:500;">@e.Name</div>
+                            <div class="text-muted font-monospace" style="font-size:11px;">
+                                @Math.Round(e.Calories) cal · @($"{e.ProteinG:F1}")g P · @($"{e.FiberG ?? 0:F1}")g fiber · @($"{e.IronMg ?? 0:F1}")mg Fe
+                            </div>
+                        </div>
+                        <button class="btn btn-sm text-danger" @onclick="() => DeleteEntry(e.Id)">✕</button>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    <!-- Body: waist to height -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-header bg-primary text-white">Body — waist to height</div>
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <span class="fw-bold font-monospace fs-4" style="color:@RatioColor">@RatioText</span>
+                <span class="text-muted text-end" style="font-size:11px;">
+                    waist ÷ height<br />target under 0.50@(_fallbackHeight > 0 ? $" (waist < {_fallbackHeight * 0.5m:F1}in)" : "")
+                </span>
+            </div>
+            <div class="row g-2 align-items-end mb-2">
+                <div class="col">
+                    <label class="form-label mb-0" style="font-size:10px;">WAIST (IN)</label>
+                    <input type="number" class="form-control form-control-sm" min="0" step="0.1" placeholder="e.g. 32" @bind="_formWaist" />
+                </div>
+                <div class="col">
+                    <label class="form-label mb-0" style="font-size:10px;">HEIGHT (IN)</label>
+                    <input type="number" class="form-control form-control-sm" min="0" step="0.1" @bind="_formHeight" />
+                </div>
+                <div class="col">
+                    <button class="btn btn-dark w-100 btn-sm" @onclick="SaveMeasurement" disabled="@(_formWaist is null or <= 0)">Save</button>
+                </div>
+            </div>
+            <div class="text-muted" style="font-size:12px;">@BodyNote</div>
+            @if (_measurements.Count > 0)
+            {
+                <div class="text-muted font-monospace mt-2" style="font-size:11px;">
+                    @string.Join("   ·   ", _measurements.Take(6).Select(m => $"{m.Date:yyyy-MM-dd}: {m.WaistIn}in"))
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Quick-add management -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center"
+             style="cursor:pointer;" @onclick="() => _manageOpen = !_manageOpen">
+            <span>Manage quick-add items</span>
+            <span>@(_manageOpen ? "▾" : "▸")</span>
+        </div>
+        @if (_manageOpen)
+        {
+            <div class="card-body">
+                @foreach (var q in _quickItems)
+                {
+                    <div class="d-flex align-items-center gap-2 border rounded p-2 mb-1">
+                        <div class="flex-grow-1" style="min-width:0;">
+                            <div class="text-truncate" style="font-size:14px;">@q.Name</div>
+                            <div class="text-muted font-monospace" style="font-size:11px;">
+                                @Math.Round(q.Calories) cal · @($"{q.ProteinG:F1}")g P · @($"{q.FiberG:F1}")g fiber · @($"{q.IronMg:F1}")mg Fe
+                                @(q.IsPlant ? " · plant" : "")
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditQuickItem(q)">✎</button>
+                        <button class="btn btn-sm text-danger" @onclick="() => DeleteQuickItem(q.Id)">✕</button>
+                    </div>
+                }
+
+                <hr />
+                <div class="fw-bold mb-2" style="font-size:13px;">@(_editingQuickId is null ? "Add new quick item" : "Edit quick item")</div>
+                <div class="mb-2">
+                    <input type="text" class="form-control form-control-sm" placeholder="Name" @bind="_quickName" />
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-3"><input type="number" class="form-control form-control-sm" placeholder="Cal" min="0" @bind="_quickCal" /></div>
+                    <div class="col-3"><input type="number" class="form-control form-control-sm" placeholder="Protein g" min="0" step="0.1" @bind="_quickProtein" /></div>
+                    <div class="col-3"><input type="number" class="form-control form-control-sm" placeholder="Fiber g" min="0" step="0.1" @bind="_quickFiber" /></div>
+                    <div class="col-3"><input type="number" class="form-control form-control-sm" placeholder="Iron mg" min="0" step="0.1" @bind="_quickIron" /></div>
+                </div>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="quickPlantCheck" @bind="_quickPlant" />
+                    <label class="form-check-label" for="quickPlantCheck" style="font-size:13px;">Plant item</label>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-success btn-sm" @onclick="SaveQuickItem" disabled="@(string.IsNullOrWhiteSpace(_quickName))">
+                        @(_editingQuickId is null ? "+ Add" : "💾 Save")
+                    </button>
+                    @if (_editingQuickId is not null)
+                    {
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="CancelQuickEdit">Cancel</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private DateTime _currentDate = DateTime.Today;
+    private List<FoodLogEntry> _entries = new();
+    private List<QuickAddItem> _quickItems = new();
+    private List<BodyMeasurement> _measurements = new();
+    private int _weeklyPlants;
+    private decimal _fallbackHeight;
+
+    // Targets (loaded from UserPreferences, fieldlog defaults)
+    private decimal _calMin = 1700, _calMax = 1950, _proteinMin = 130, _proteinMax = 145,
+                    _fiberTarget = 30, _ironTarget = 18, _lowFloor = 1600;
+
+    private (decimal Cal, decimal Protein, decimal Fiber, decimal Iron) _totals;
+
+    // Log form
+    private string _formName = "";
+    private decimal? _formCal, _formProtein, _formFiber, _formIron;
+    private bool _formPlant;
+
+    // Body form
+    private decimal? _formWaist, _formHeight;
+
+    // Quick-add management
+    private bool _manageOpen;
+    private int? _editingQuickId;
+    private string _quickName = "";
+    private decimal? _quickCal, _quickProtein, _quickFiber, _quickIron;
+    private bool _quickPlant;
+
+    private bool IsToday => _currentDate == DateTime.Today;
+    private bool IsFuture => _currentDate > DateTime.Today;
+    private bool ShowLowFlag => _totals.Cal > 0 && _totals.Cal < _lowFloor && !IsFuture;
+
+    private string CalColor => _totals.Cal < _calMin ? "#3A4F73" : (_totals.Cal > _calMax ? "#A6512F" : "#4F7358");
+    private string ProteinColor => _totals.Protein < _proteinMin ? "#8A7B3D" : "#4F7358";
+
+    private BodyMeasurement? Latest => _measurements.FirstOrDefault();
+    private decimal? Ratio => Latest is { WaistIn: > 0 } l ? l.WaistIn / (l.HeightIn > 0 ? l.HeightIn : _fallbackHeight) : null;
+    private string RatioText => Ratio is decimal r ? r.ToString("F2") : "—";
+    private string RatioColor => Ratio is decimal r ? (r < 0.5m ? "#4F7358" : "#A6512F") : "inherit";
+
+    private string BodyNote => Latest is { WaistIn: > 0 } l && Ratio is decimal r
+        ? (r < 0.5m
+            ? $"Waist {l.WaistIn}in ÷ {(l.HeightIn > 0 ? l.HeightIn : _fallbackHeight)}in = {r:F2}. Under 0.5 — associated with lower visceral-fat risk. Tracks composition better than BMI."
+            : $"Waist {l.WaistIn}in ÷ {(l.HeightIn > 0 ? l.HeightIn : _fallbackHeight)}in = {r:F2}. Above 0.5 is where visceral-fat risk rises; trending it down over time is the goal — no single reading matters much.")
+        : "Measure at the narrowest point (usually just above the navel), relaxed, after exhaling. Weekly is plenty. Trend matters more than any single number.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _calMin = await PrefService.GetDecimalAsync("LogCalMin", 1700);
+        _calMax = await PrefService.GetDecimalAsync("LogCalMax", 1950);
+        _proteinMin = await PrefService.GetDecimalAsync("LogProteinMin", 130);
+        _proteinMax = await PrefService.GetDecimalAsync("LogProteinMax", 145);
+        _fiberTarget = await PrefService.GetDecimalAsync("LogFiberTarget", 30);
+        _ironTarget = await PrefService.GetDecimalAsync("LogIronTarget", 18);
+        _lowFloor = await PrefService.GetDecimalAsync("LogLowIntakeFloor", 1600);
+
+        _quickItems = await FoodLog.GetQuickAddItemsAsync();
+        await LoadBodyAsync();
+        await LoadDayAsync();
+    }
+
+    private async Task LoadDayAsync()
+    {
+        _entries = await FoodLog.GetEntriesForDateAsync(_currentDate);
+        _weeklyPlants = await FoodLog.GetWeeklyPlantCountAsync(_currentDate);
+        _totals = (
+            _entries.Sum(e => e.Calories),
+            _entries.Sum(e => e.ProteinG),
+            _entries.Sum(e => e.FiberG ?? 0),
+            _entries.Sum(e => e.IronMg ?? 0));
+    }
+
+    private async Task LoadBodyAsync()
+    {
+        _measurements = await BodyService.GetAllAsync();
+        _fallbackHeight = await BodyService.GetFallbackHeightAsync();
+        _formHeight ??= _fallbackHeight;
+    }
+
+    private async Task PrevDay() { _currentDate = _currentDate.AddDays(-1); await LoadDayAsync(); }
+    private async Task NextDay() { _currentDate = _currentDate.AddDays(1); await LoadDayAsync(); }
+
+    private async Task AddEntry()
+    {
+        if (string.IsNullOrWhiteSpace(_formName)) return;
+        await FoodLog.AddEntryAsync(new FoodLogEntry
+        {
+            Date = _currentDate,
+            Name = _formName.Trim(),
+            Calories = _formCal ?? 0,
+            ProteinG = _formProtein ?? 0,
+            FiberG = _formFiber,
+            IronMg = _formIron,
+            IsPlant = _formPlant
+        });
+        _formName = "";
+        _formCal = _formProtein = _formFiber = _formIron = null;
+        _formPlant = false;
+        await LoadDayAsync();
+    }
+
+    private async Task QuickAdd(QuickAddItem q)
+    {
+        await FoodLog.AddEntryAsync(new FoodLogEntry
+        {
+            Date = _currentDate,
+            Name = q.Name,
+            Calories = q.Calories,
+            ProteinG = q.ProteinG,
+            FiberG = q.FiberG,
+            IronMg = q.IronMg,
+            IsPlant = q.IsPlant
+        });
+        await LoadDayAsync();
+    }
+
+    private async Task DeleteEntry(int id)
+    {
+        await FoodLog.DeleteEntryAsync(id);
+        await LoadDayAsync();
+    }
+
+    private async Task SaveMeasurement()
+    {
+        if (_formWaist is not > 0) return;
+        var height = _formHeight is > 0 ? _formHeight.Value : _fallbackHeight;
+        if (_formHeight is > 0)
+            await PrefService.SetAsync("LogHeightIn", _formHeight.Value.ToString());
+        await BodyService.AddAsync(new BodyMeasurement
+        {
+            Date = DateTime.Today,
+            WaistIn = _formWaist.Value,
+            HeightIn = height
+        });
+        _formWaist = null;
+        await LoadBodyAsync();
+    }
+
+    // fieldlog trims quick-chip labels at the first "(" for compactness
+    private static string ShortName(string name)
+    {
+        var idx = name.IndexOf('(');
+        return (idx > 0 ? name[..idx] : name).Trim();
+    }
+
+    private void EditQuickItem(QuickAddItem q)
+    {
+        _editingQuickId = q.Id;
+        _quickName = q.Name;
+        _quickCal = q.Calories;
+        _quickProtein = q.ProteinG;
+        _quickFiber = q.FiberG;
+        _quickIron = q.IronMg;
+        _quickPlant = q.IsPlant;
+    }
+
+    private void CancelQuickEdit()
+    {
+        _editingQuickId = null;
+        _quickName = "";
+        _quickCal = _quickProtein = _quickFiber = _quickIron = null;
+        _quickPlant = false;
+    }
+
+    private async Task SaveQuickItem()
+    {
+        if (string.IsNullOrWhiteSpace(_quickName)) return;
+        if (_editingQuickId is int id)
+        {
+            await FoodLog.UpdateQuickAddItemAsync(new QuickAddItem
+            {
+                Id = id,
+                Name = _quickName.Trim(),
+                Calories = _quickCal ?? 0,
+                ProteinG = _quickProtein ?? 0,
+                FiberG = _quickFiber ?? 0,
+                IronMg = _quickIron ?? 0,
+                IsPlant = _quickPlant,
+                SortOrder = _quickItems.FirstOrDefault(x => x.Id == id)?.SortOrder ?? 0
+            });
+        }
+        else
+        {
+            await FoodLog.AddQuickAddItemAsync(new QuickAddItem
+            {
+                Name = _quickName.Trim(),
+                Calories = _quickCal ?? 0,
+                ProteinG = _quickProtein ?? 0,
+                FiberG = _quickFiber ?? 0,
+                IronMg = _quickIron ?? 0,
+                IsPlant = _quickPlant,
+                SortOrder = _quickItems.Count == 0 ? 0 : _quickItems.Max(x => x.SortOrder) + 1
+            });
+        }
+        CancelQuickEdit();
+        _quickItems = await FoodLog.GetQuickAddItemsAsync();
+    }
+
+    private async Task DeleteQuickItem(int id)
+    {
+        await FoodLog.DeleteQuickAddItemAsync(id);
+        if (_editingQuickId == id) CancelQuickEdit();
+        _quickItems = await FoodLog.GetQuickAddItemsAsync();
+    }
+}
