@@ -1,0 +1,542 @@
+@page "/shop"
+@using MealPrep.Data
+@using MealPrep.Services
+@inject StoreService StoreService
+@inject IngredientService IngredientService
+@inject PriceScraperService ScraperService
+@inject IJSRuntime JS
+<PageTitle>Shop</PageTitle>
+
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0 text-primary fw-bold">Shop</h2>
+        <div class="d-flex gap-2">
+            @if (stores.Count > 1)
+            {
+                <select class="form-select form-select-sm" style="width:auto;" value="@selectedStoreId" @onchange="OnStoreChanged">
+                    @foreach (var s in stores)
+                    {
+                        <option value="@s.Id">@s.Name @(s.IsDefault ? "(default)" : "")</option>
+                    }
+                </select>
+            }
+            <button class="btn btn-outline-primary btn-sm" @onclick="OpenStoreModal">Manage Stores</button>
+            @if (selectedStoreId > 0)
+            {
+                <button class="btn btn-success btn-sm" @onclick="OpenAddMappingModal">+ Add Mapping</button>
+                <button class="btn btn-primary btn-sm" @onclick="UpdateAllPrices" disabled="@isUpdatingAll">
+                    @(isUpdatingAll ? "Updating..." : "Update All Prices")
+                </button>
+                <button class="btn btn-outline-success btn-sm" @onclick="SyncAllPrices">Sync All</button>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="alert @(statusIsError ? "alert-danger" : "alert-success") alert-dismissible fade show">
+            @statusMessage
+            <button type="button" class="btn-close" @onclick='() => statusMessage = ""'></button>
+        </div>
+    }
+
+    @if (stores.Count == 0)
+    {
+        <div class="alert alert-info">No stores yet. Click "Manage Stores" to add your first store.</div>
+    }
+    else if (selectedStoreId > 0)
+    {
+        <!-- Search -->
+        <div class="mb-3">
+            <input type="text" class="form-control" placeholder="Search mapped products..." @bind="searchTerm" @bind:event="oninput" />
+        </div>
+
+        <!-- Mapped Products -->
+        <h5 class="fw-bold mb-2">Mapped Products</h5>
+        @if (mappedProducts.Count == 0)
+        {
+            <div class="alert alert-light">No products mapped yet. Click "+ Add Mapping" to link an ingredient to a store product.</div>
+        }
+        else
+        {
+            <div class="card shadow-sm mb-4">
+                <div class="card-body p-0">
+                    <table class="table table-striped table-hover mb-0">
+                        <thead class="table-primary">
+                            <tr>
+                                <th role="button" @onclick='() => SetSort("Ingredient")'>Ingredient @SortIndicator("Ingredient")</th>
+                                <th role="button" @onclick='() => SetSort("Product")'>Product @SortIndicator("Product")</th>
+                                <th role="button" class="text-end" @onclick='() => SetSort("Price")'>Price @SortIndicator("Price")</th>
+                                <th role="button" class="text-end" @onclick='() => SetSort("PricePerUnit")'>Price/Unit @SortIndicator("PricePerUnit")</th>
+                                <th role="button" @onclick='() => SetSort("Updated")'>Updated @SortIndicator("Updated")</th>
+                                <th style="width:200px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var p in GetFilteredSortedProducts())
+                            {
+                                <tr>
+                                    <td>@p.Ingredient?.Name</td>
+                                    <td>
+                                        @p.ProductName
+                                        @if (p.PackageSize.HasValue)
+                                        {
+                                            <small class="text-muted">(@p.PackageSize @p.PackageUnit)</small>
+                                        }
+                                    </td>
+                                    <td class="text-end">@($"{currencySymbol}{p.Price:F2}")</td>
+                                    <td class="text-end">@(p.PricePerUnit.HasValue ? $"{currencySymbol}{p.PricePerUnit:F2}/{p.Ingredient?.Unit}" : "—")</td>
+                                    <td>@FormatTimeAgo(p.LastUpdated)</td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-primary" @onclick="() => UpdateSinglePrice(p)" disabled="@(updatingProductId == p.Id)">
+                                                @(updatingProductId == p.Id ? "..." : "Update")
+                                            </button>
+                                            <button class="btn btn-outline-success" @onclick="() => SyncPrice(p.Id)">Sync</button>
+                                            <button class="btn btn-outline-secondary" @onclick="() => OpenEditProductModal(p)">Edit</button>
+                                            <button class="btn btn-outline-danger" @onclick="() => UnmapProduct(p.Id)">Unmap</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+    }
+</div>
+
+@* ===== Store Management Modal ===== *@
+@if (showStoreModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">Manage Stores</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseStoreModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (stores.Count > 0)
+                    {
+                        <table class="table table-sm mb-3">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Location</th>
+                                    <th>Default</th>
+                                    <th style="width:120px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var s in stores)
+                                {
+                                    <tr>
+                                        <td>@s.Name</td>
+                                        <td>@s.StoreType</td>
+                                        <td>@(s.Location ?? "—")</td>
+                                        <td>
+                                            @if (s.IsDefault)
+                                            {
+                                                <span class="badge bg-success">Default</span>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => SetDefault(s.Id)">Set</button>
+                                            }
+                                        </td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn btn-outline-primary" @onclick="() => StartEditStore(s)">Edit</button>
+                                                <button class="btn btn-outline-danger" @onclick="() => DeleteStore(s.Id)">Delete</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    <hr />
+                    <h6>@(editingStore.Id == 0 ? "Add Store" : "Edit Store")</h6>
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Name</label>
+                            <input @bind="editingStore.Name" class="form-control" placeholder="e.g., My Walmart" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Store Type</label>
+                            <select @bind="editingStore.StoreType" class="form-select">
+                                <option value="">-- Select --</option>
+                                <option value="Walmart">Walmart</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Location (optional)</label>
+                            <input @bind="editingStore.Location" class="form-control" placeholder="zip or address" />
+                        </div>
+                    </div>
+                    <button class="btn btn-success mt-2" @onclick="SaveStore">
+                        @(editingStore.Id == 0 ? "Add Store" : "Save Store")
+                    </button>
+                    @if (editingStore.Id != 0)
+                    {
+                        <button class="btn btn-secondary mt-2 ms-2" @onclick="CancelEditStore">Cancel</button>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseStoreModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ===== Map / Edit Product Modal ===== *@
+@if (showProductModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">@(editingProduct.Id == 0 ? "Map Product" : "Edit Product")</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseProductModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Ingredient</label>
+                        <select class="form-select" value="@editingProduct.IngredientId" @onchange="OnIngredientSelected">
+                            <option value="0">-- Select Ingredient --</option>
+                            @foreach (var ing in allIngredients)
+                            {
+                                <option value="@ing.Id">@ing.Name (@ing.Unit)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Product URL</label>
+                        <input @bind="editingProduct.ProductUrl" class="form-control" placeholder="https://www.walmart.com/ip/..." />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Product Name</label>
+                        <input @bind="editingProduct.ProductName" class="form-control" placeholder="e.g., Great Value Chicken Breast 3lb" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Price</label>
+                        <input @bind="editingProduct.Price" type="number" step="0.01" min="0" class="form-control" />
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-bold">Package Size (optional)</label>
+                            <input @bind="editingProduct.PackageSize" type="number" step="0.01" min="0" class="form-control" placeholder="e.g., 3.0" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-bold">Package Unit (optional)</label>
+                            <select @bind="editingProduct.PackageUnit" class="form-select">
+                                <option value="">-- Unit --</option>
+                                @foreach (var u in CookingUnits.All)
+                                {
+                                    <option value="@u">@u</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseProductModal">Cancel</button>
+                    <button class="btn btn-success" @onclick="SaveProduct">
+                        @(editingProduct.Id == 0 ? "Map" : "Save")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Store> stores = new();
+    private List<StoreProduct> mappedProducts = new();
+    private List<Ingredient> allIngredients = new();
+    private int selectedStoreId;
+    private string currencySymbol = "$";
+    private string searchTerm = "";
+    private string sortColumn = "Ingredient";
+    private bool sortAscending = true;
+    private string statusMessage = "";
+    private bool statusIsError;
+    private bool isUpdatingAll;
+    private int updatingProductId;
+
+    // Store modal
+    private bool showStoreModal;
+    private Store editingStore = new();
+
+    // Product modal
+    private bool showProductModal;
+    private StoreProduct editingProduct = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadStores();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            currencySymbol = await JS.InvokeAsync<string>("currencySymbol.get");
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadStores()
+    {
+        stores = await StoreService.GetAllStoresAsync();
+        if (stores.Count > 0 && selectedStoreId == 0)
+        {
+            var def = stores.FirstOrDefault(s => s.IsDefault) ?? stores.First();
+            selectedStoreId = def.Id;
+        }
+        if (selectedStoreId > 0)
+            await LoadProducts();
+    }
+
+    private async Task LoadProducts()
+    {
+        mappedProducts = await StoreService.GetProductsForStoreAsync(selectedStoreId);
+        allIngredients = await IngredientService.GetAllAsync();
+    }
+
+    private async Task OnStoreChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id))
+        {
+            selectedStoreId = id;
+            await LoadProducts();
+        }
+    }
+
+    // --- Sort / Filter ---
+    private IEnumerable<StoreProduct> GetFilteredSortedProducts()
+    {
+        var result = mappedProducts.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+            result = result.Where(p =>
+                (p.Ingredient?.Name ?? "").Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                (p.ProductName ?? "").Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+        result = sortColumn switch
+        {
+            "Product" => sortAscending ? result.OrderBy(p => p.ProductName) : result.OrderByDescending(p => p.ProductName),
+            "Price" => sortAscending ? result.OrderBy(p => p.Price) : result.OrderByDescending(p => p.Price),
+            "PricePerUnit" => sortAscending ? result.OrderBy(p => p.PricePerUnit ?? 0) : result.OrderByDescending(p => p.PricePerUnit ?? 0),
+            "Updated" => sortAscending ? result.OrderBy(p => p.LastUpdated) : result.OrderByDescending(p => p.LastUpdated),
+            _ => sortAscending ? result.OrderBy(p => p.Ingredient?.Name) : result.OrderByDescending(p => p.Ingredient?.Name),
+        };
+        return result;
+    }
+
+    private void SetSort(string column)
+    {
+        if (sortColumn == column) sortAscending = !sortAscending;
+        else { sortColumn = column; sortAscending = true; }
+    }
+
+    private string SortIndicator(string column)
+        => sortColumn == column ? (sortAscending ? " ▲" : " ▼") : "";
+
+    private static string FormatTimeAgo(DateTime utcDate)
+    {
+        var span = DateTime.UtcNow - utcDate;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalHours < 1) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalDays < 1) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalDays < 30) return $"{(int)span.TotalDays}d ago";
+        return utcDate.ToLocalTime().ToString("MMM d, yyyy");
+    }
+
+    // --- Store Management ---
+    private void OpenStoreModal()
+    {
+        editingStore = new Store();
+        showStoreModal = true;
+    }
+
+    private void CloseStoreModal()
+    {
+        showStoreModal = false;
+        editingStore = new Store();
+    }
+
+    private void StartEditStore(Store s)
+    {
+        editingStore = new Store
+        {
+            Id = s.Id, Name = s.Name, StoreType = s.StoreType,
+            Location = s.Location, IsDefault = s.IsDefault
+        };
+    }
+
+    private void CancelEditStore() => editingStore = new Store();
+
+    private async Task SaveStore()
+    {
+        if (string.IsNullOrWhiteSpace(editingStore.Name) || string.IsNullOrWhiteSpace(editingStore.StoreType)) return;
+
+        if (editingStore.Id == 0)
+            await StoreService.CreateStoreAsync(editingStore);
+        else
+            await StoreService.UpdateStoreAsync(editingStore);
+
+        editingStore = new Store();
+        await LoadStores();
+    }
+
+    private async Task DeleteStore(int id)
+    {
+        await StoreService.DeleteStoreAsync(id);
+        if (selectedStoreId == id) selectedStoreId = 0;
+        await LoadStores();
+    }
+
+    private async Task SetDefault(int id)
+    {
+        await StoreService.SetDefaultStoreAsync(id);
+        await LoadStores();
+    }
+
+    // --- Product Mapping ---
+    private void OpenAddMappingModal()
+    {
+        editingProduct = new StoreProduct { StoreId = selectedStoreId };
+        showProductModal = true;
+    }
+
+    private void OpenEditProductModal(StoreProduct p)
+    {
+        editingProduct = new StoreProduct
+        {
+            Id = p.Id, StoreId = p.StoreId, IngredientId = p.IngredientId,
+            ProductUrl = p.ProductUrl, ProductName = p.ProductName,
+            Price = p.Price, PackageSize = p.PackageSize,
+            PackageUnit = p.PackageUnit, PricePerUnit = p.PricePerUnit,
+            LastUpdated = p.LastUpdated
+        };
+        showProductModal = true;
+    }
+
+    private void OnIngredientSelected(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id))
+        {
+            editingProduct.IngredientId = id;
+            var ing = allIngredients.FirstOrDefault(i => i.Id == id);
+            if (ing != null)
+                editingProduct.PackageUnit = ing.Unit;
+        }
+    }
+
+    private void CloseProductModal()
+    {
+        showProductModal = false;
+        editingProduct = new StoreProduct();
+    }
+
+    private async Task SaveProduct()
+    {
+        if (editingProduct.IngredientId == 0) return;
+
+        if (editingProduct.Id == 0)
+            await StoreService.CreateProductAsync(editingProduct);
+        else
+            await StoreService.UpdateProductAsync(editingProduct);
+
+        CloseProductModal();
+        await LoadProducts();
+    }
+
+    private async Task UnmapProduct(int id)
+    {
+        await StoreService.DeleteProductAsync(id);
+        await LoadProducts();
+    }
+
+    // --- Price Actions ---
+    private async Task UpdateSinglePrice(StoreProduct p)
+    {
+        var store = stores.FirstOrDefault(s => s.Id == p.StoreId);
+        if (store == null || string.IsNullOrWhiteSpace(p.ProductUrl)) return;
+
+        updatingProductId = p.Id;
+        StateHasChanged();
+
+        var result = await ScraperService.ScrapePriceAsync(p.ProductUrl, store.StoreType);
+        if (result != null)
+        {
+            p.Price = result.Price;
+            if (result.ProductName != null) p.ProductName = result.ProductName;
+            if (p.PackageSize.HasValue && p.PackageSize > 0)
+                p.PricePerUnit = p.Price / p.PackageSize;
+            p.LastUpdated = DateTime.UtcNow;
+            await StoreService.UpdateProductAsync(p);
+            SetStatus($"Updated {p.Ingredient?.Name}: {currencySymbol}{result.Price:F2}", false);
+        }
+        else
+        {
+            SetStatus($"Could not scrape price for {p.Ingredient?.Name}. Check the URL.", true);
+        }
+
+        updatingProductId = 0;
+        await LoadProducts();
+    }
+
+    private async Task UpdateAllPrices()
+    {
+        var store = stores.FirstOrDefault(s => s.Id == selectedStoreId);
+        if (store == null) return;
+
+        isUpdatingAll = true;
+        StateHasChanged();
+
+        int success = 0, fail = 0;
+        foreach (var p in mappedProducts.Where(p => !string.IsNullOrWhiteSpace(p.ProductUrl)))
+        {
+            var result = await ScraperService.ScrapePriceAsync(p.ProductUrl, store.StoreType);
+            if (result != null)
+            {
+                p.Price = result.Price;
+                if (result.ProductName != null) p.ProductName = result.ProductName;
+                if (p.PackageSize.HasValue && p.PackageSize > 0)
+                    p.PricePerUnit = p.Price / p.PackageSize;
+                p.LastUpdated = DateTime.UtcNow;
+                await StoreService.UpdateProductAsync(p);
+                success++;
+            }
+            else fail++;
+        }
+
+        isUpdatingAll = false;
+        SetStatus($"Updated {success} product(s). {(fail > 0 ? $"{fail} failed." : "")}", fail > 0);
+        await LoadProducts();
+    }
+
+    private async Task SyncPrice(int productId)
+    {
+        await StoreService.SyncPriceToIngredientAsync(productId);
+        SetStatus("Price synced to ingredient.", false);
+    }
+
+    private async Task SyncAllPrices()
+    {
+        await StoreService.SyncAllPricesToIngredientsAsync(selectedStoreId);
+        SetStatus("All prices synced to ingredients.", false);
+    }
+
+    private void SetStatus(string msg, bool isError)
+    {
+        statusMessage = msg;
+        statusIsError = isError;
+    }
+}

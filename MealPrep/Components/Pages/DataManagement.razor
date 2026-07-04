@@ -1,0 +1,476 @@
+@page "/data"
+@using MealPrep.Data
+@using MealPrep.Services
+@inject IJSRuntime JS
+
+<h3 class="mb-4">Data Management</h3>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Export Data</h5>
+        <p class="card-text">Save all your meals, recipes, ingredients, and pantry items to a JSON file. Use this to back up your data or transfer it to another device.</p>
+        <button class="btn btn-primary" @onclick="ExportData" disabled="@_busy">
+            @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+            Export to JSON
+        </button>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Import Data</h5>
+        <p class="card-text text-danger"><strong>Warning:</strong> Importing will replace all existing data. Export your current data first if you want to keep it.</p>
+        <button class="btn btn-warning" @onclick="ImportData" disabled="@_busy">
+            @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+            Import from JSON
+        </button>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Export Month</h5>
+        <p class="card-text">Export meals, recipes, and ingredients for a specific month to a JSON file. Use this to save or share a single month's meal plan.</p>
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-auto">
+                <label class="form-label">Month</label>
+                <select class="form-select" @bind="_exportMonth">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        <option value="@m">@(new DateTime(2000, m, 1).ToString("MMMM"))</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label">Year</label>
+                <input type="number" class="form-control" @bind="_exportYear" min="2000" max="2100" style="width:100px" />
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-primary" @onclick="ExportMonth" disabled="@_busy">
+                    @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Export Month
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Import Month</h5>
+        <p class="card-text">Import a month export file into a target month. Meals are merged with any existing meals. Missing recipes and ingredients are added automatically.</p>
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-auto">
+                <label class="form-label">Target Month</label>
+                <select class="form-select" @bind="_importTargetMonth">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        <option value="@m">@(new DateTime(2000, m, 1).ToString("MMMM"))</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label">Target Year</label>
+                <input type="number" class="form-control" @bind="_importTargetYear" min="2000" max="2100" style="width:100px" />
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-warning" @onclick="ImportMonth" disabled="@_busy">
+                    @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Import Month
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Export Recipe Book</h5>
+        <p class="card-text">Export a recipe book with all its recipes and ingredients to share with others.</p>
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-auto">
+                <label class="form-label">Recipe Book</label>
+                <select class="form-select" @bind="_exportBookId">
+                    <option value="0">-- Select a book --</option>
+                    @if (_books != null)
+                    {
+                        @foreach (var book in _books)
+                        {
+                            <option value="@book.Id">@book.Name (@book.Entries.Count recipes)</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-primary" @onclick="ExportBook" disabled="@(_busy || _exportBookId == 0)">
+                    @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Export Book
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Import Recipe Book</h5>
+        <p class="card-text">Import a recipe book file. If a book with the same name exists, recipes are merged into it. New recipes and ingredients are created as needed.</p>
+        <button class="btn btn-warning" @onclick="ImportBook" disabled="@_busy">
+            @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+            Import Book
+        </button>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">GitHub Backup</h5>
+        <p class="card-text">Sync your data with GitHub. Creates a pull request for review before merging. Configure repository settings in <a href="/settings">Settings</a>.</p>
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary" @onclick="CreatePR" disabled="@(_busy || !_gitConfigured)">
+                @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                Create Backup PR
+            </button>
+            <button class="btn btn-warning" @onclick="PullFromGitHub" disabled="@(_busy || !_gitConfigured)">
+                @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                Pull from GitHub
+            </button>
+        </div>
+        @if (!_gitConfigured)
+        {
+            <small class="text-muted mt-2 d-block">No GitHub repository configured. Go to <a href="/settings">Settings</a> to set it up.</small>
+        }
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(_message))
+{
+    <div class="alert @_alertClass mt-3" role="alert">
+        @_message
+    </div>
+}
+
+@code {
+    [Inject] private DataPortService DataPortService { get; set; } = default!;
+    [Inject] private RecipeBookService BookService { get; set; } = default!;
+    [Inject] private GitBackupService GitBackupService { get; set; } = default!;
+
+    private bool _busy;
+    private string? _message;
+    private string _alertClass = "alert-info";
+
+    private int _exportMonth = DateTime.Now.Month;
+    private int _exportYear = DateTime.Now.Year;
+    private int _importTargetMonth = DateTime.Now.Month;
+    private int _importTargetYear = DateTime.Now.Year;
+
+    private int _exportBookId;
+    private List<RecipeBook>? _books;
+
+    private string _gitRepo = "";
+    private string _gitToken = "";
+    private string _gitPath = "";
+    private bool _gitConfigured;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _books = await BookService.GetAllBooksAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var settings = await JS.InvokeAsync<GitSettings>("gitBackup.get");
+            _gitRepo = settings.Repo ?? "";
+            _gitToken = settings.Token ?? "";
+            _gitPath = string.IsNullOrWhiteSpace(settings.Path) ? "mealprep-backup" : settings.Path;
+            _gitConfigured = !string.IsNullOrWhiteSpace(_gitRepo) && !string.IsNullOrWhiteSpace(_gitToken);
+            StateHasChanged();
+        }
+    }
+
+    private async Task CreatePR()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var files = await DataPortService.ExportSplitAsync();
+            var prUrl = await GitBackupService.CreateBackupPRAsync(_gitRepo, _gitToken, _gitPath, files);
+            _message = $"Pull request created successfully: {prUrl}";
+            _alertClass = "alert-success";
+        }
+        catch (Exception ex)
+        {
+            _message = $"PR creation failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task PullFromGitHub()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var files = await GitBackupService.PullBackupFilesAsync(_gitRepo, _gitToken, _gitPath);
+            if (files.Count == 0)
+                throw new Exception("No backup files found in the repository.");
+            await DataPortService.ImportSplitAsync(files);
+            _message = $"Data restored from GitHub successfully ({files.Count} files).";
+            _alertClass = "alert-success";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Pull failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private record GitSettings(string? Repo, string? Token, string? Path);
+
+    private async Task ExportData()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var json = await DataPortService.ExportAsync();
+            var fileName = $"MealPrep-Backup-{DateTime.Now:yyyy-MM-dd-HHmmss}.json";
+
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+            var filePath = Path.Combine(FileSystem.CacheDirectory, fileName);
+            await File.WriteAllTextAsync(filePath, json);
+
+            await Share.Default.RequestAsync(new ShareFileRequest
+            {
+                Title = "Export MealPrep Data",
+                File = new ShareFile(filePath)
+            });
+
+            _message = "Data exported successfully.";
+            _alertClass = "alert-success";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Export failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ImportData()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var result = await FilePicker.Default.PickAsync(new PickOptions
+            {
+                PickerTitle = "Select MealPrep backup file",
+                FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
+                {
+                    { DevicePlatform.WinUI, new[] { ".json" } },
+                    { DevicePlatform.Android, new[] { "application/json" } },
+                    { DevicePlatform.iOS, new[] { "public.json" } },
+                    { DevicePlatform.macOS, new[] { "public.json" } },
+                    { DevicePlatform.MacCatalyst, new[] { "public.json" } }
+                })
+            });
+
+            if (result == null)
+            {
+                _busy = false;
+                return;
+            }
+
+            using var stream = await result.OpenReadAsync();
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+
+            await DataPortService.ImportAsync(json);
+
+            _message = "Data imported successfully. Your data has been restored.";
+            _alertClass = "alert-success";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Import failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ExportMonth()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var json = await DataPortService.ExportMonthAsync(_exportYear, _exportMonth);
+            var monthName = new DateTime(_exportYear, _exportMonth, 1).ToString("MMMM");
+            var fileName = $"MealPrep-{monthName}-{_exportYear}.json";
+
+            var filePath = Path.Combine(FileSystem.CacheDirectory, fileName);
+            await File.WriteAllTextAsync(filePath, json);
+
+            await Share.Default.RequestAsync(new ShareFileRequest
+            {
+                Title = $"Export {monthName} {_exportYear}",
+                File = new ShareFile(filePath)
+            });
+
+            _message = $"Month exported successfully ({monthName} {_exportYear}).";
+            _alertClass = "alert-success";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Month export failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ImportMonth()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var result = await FilePicker.Default.PickAsync(new PickOptions
+            {
+                PickerTitle = "Select month export file",
+                FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
+                {
+                    { DevicePlatform.WinUI, new[] { ".json" } },
+                    { DevicePlatform.Android, new[] { "application/json" } },
+                    { DevicePlatform.iOS, new[] { "public.json" } },
+                    { DevicePlatform.macOS, new[] { "public.json" } },
+                    { DevicePlatform.MacCatalyst, new[] { "public.json" } }
+                })
+            });
+
+            if (result == null)
+            {
+                _busy = false;
+                return;
+            }
+
+            using var stream = await result.OpenReadAsync();
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+
+            var copied = await DataPortService.ImportMonthAsync(json, _importTargetYear, _importTargetMonth);
+            var monthName = new DateTime(_importTargetYear, _importTargetMonth, 1).ToString("MMMM");
+
+            _message = $"Month imported successfully. {copied} meals added to {monthName} {_importTargetYear}.";
+            _alertClass = "alert-success";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Month import failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ExportBook()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var json = await DataPortService.ExportBookAsync(_exportBookId);
+            var book = _books?.FirstOrDefault(b => b.Id == _exportBookId);
+            var fileName = $"MealPrep-Book-{book?.Name ?? "Unknown"}-{DateTime.Now:yyyy-MM-dd-HHmmss}.json";
+
+            var filePath = Path.Combine(FileSystem.CacheDirectory, fileName);
+            await File.WriteAllTextAsync(filePath, json);
+
+            await Share.Default.RequestAsync(new ShareFileRequest
+            {
+                Title = $"Export Recipe Book: {book?.Name}",
+                File = new ShareFile(filePath)
+            });
+
+            _message = $"Recipe book exported successfully ({book?.Name}).";
+            _alertClass = "alert-success";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Book export failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ImportBook()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var result = await FilePicker.Default.PickAsync(new PickOptions
+            {
+                PickerTitle = "Select recipe book file",
+                FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
+                {
+                    { DevicePlatform.WinUI, new[] { ".json" } },
+                    { DevicePlatform.Android, new[] { "application/json" } },
+                    { DevicePlatform.iOS, new[] { "public.json" } },
+                    { DevicePlatform.macOS, new[] { "public.json" } },
+                    { DevicePlatform.MacCatalyst, new[] { "public.json" } }
+                })
+            });
+
+            if (result == null)
+            {
+                _busy = false;
+                return;
+            }
+
+            using var stream = await result.OpenReadAsync();
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+
+            var bookName = await DataPortService.ImportBookAsync(json);
+
+            _message = $"Recipe book imported successfully: \"{bookName}\".";
+            _alertClass = "alert-success";
+            _books = await BookService.GetAllBooksAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Book import failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

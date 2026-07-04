@@ -1,0 +1,1171 @@
+@page "/"
+@page "/mealplan"
+@using MealPrep.Data
+@using MealPrep.Services
+@inject MealService MealService
+@inject RecipeService RecipeService
+@inject PantryService PantryService
+@inject IngredientService IngredientService
+@inject RecipeBookService BookService
+@inject IJSRuntime JS
+<PageTitle>Meal Planner</PageTitle>
+
+<div class="container-fluid py-3">
+    <!-- Header with month navigation -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <button class="btn btn-outline-primary" @onclick="PreviousMonth">
+            <span>&#9664;</span> Previous
+        </button>
+        <h2 class="mb-0 text-primary fw-bold">
+            @currentDate.ToString("MMMM yyyy")
+        </h2>
+        <button class="btn btn-outline-primary" @onclick="NextMonth">
+            Next <span>&#9654;</span>
+        </button>
+    </div>
+
+    <!-- Add Meal / Copy Month Buttons -->
+    <div class="text-center mb-3 d-flex justify-content-center gap-2">
+        <button class="btn btn-success btn-lg" @onclick="StartAddMealFromMain">
+            ➕ Add a Meal
+        </button>
+        <button class="btn btn-outline-primary btn-lg" @onclick="OpenCopyMonthModal">
+            📋 Copy Month
+        </button>
+    </div>
+
+    <!-- Legend -->
+    <div class="d-flex gap-3 mb-3 justify-content-center flex-wrap">
+        <span class="badge bg-warning text-dark px-3 py-2">🌅 Breakfast</span>
+        <span class="badge bg-success px-3 py-2">🥗 Lunch</span>
+        <span class="badge bg-info text-dark px-3 py-2">🍽️ Dinner</span>
+    </div>
+
+    <!-- Progress bar showing how many meals are planned -->
+    @{
+        int totalSlots = daysInMonth * 3; // 3 meal types per day
+        int filledSlots = monthMeals.Select(m => new { m.Date, m.MealType }).Distinct().Count();
+        int percent = totalSlots > 0 ? (int)Math.Round(filledSlots * 100.0 / totalSlots) : 0;
+    }
+    <div class="mb-4">
+        <div class="d-flex justify-content-between mb-1">
+            <small class="text-muted">Monthly Planning Progress</small>
+            <small class="text-muted">@filledSlots / @totalSlots meal slots planned (@percent%)</small>
+        </div>
+        <div class="progress" style="height: 10px;">
+            <div class="progress-bar @(percent == 100 ? "bg-success" : percent > 50 ? "bg-primary" : "bg-warning")"
+                 role="progressbar" style="width: @percent%"></div>
+        </div>
+    </div>
+
+    <!-- Calendar Grid -->
+    <div class="table-responsive">
+        <table class="table table-bordered calendar-table">
+            <thead class="table-primary">
+                <tr>
+                    <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var week in GetCalendarWeeks())
+                {
+                    <tr>
+                        @foreach (var day in week)
+                        {
+                            @if (day == null)
+                            {
+                                <td class="bg-dark"></td>
+                            }
+                            else
+                            {
+                                var d = day.Value;
+                                var dayMeals = GetMealsForDay(d);
+                                bool isToday = d == DateTime.Today;
+                                <td class="calendar-cell @(isToday ? "border-primary border-2" : "")"
+                                    style="min-width:120px; vertical-align:top; cursor:pointer;"
+                                    @onclick="() => OpenDayDetail(d)">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <strong class="@(isToday ? "text-primary" : "")">@d.Day</strong>
+                                        @if (dayMeals.Count == 3)
+                                        {
+                                            <span class="badge bg-success rounded-pill" title="All planned">✓</span>
+                                        }
+                                        else if (dayMeals.Count > 0)
+                                        {
+                                            <span class="badge bg-warning text-dark rounded-pill">@dayMeals.Count/3</span>
+                                        }
+                                    </div>
+                                    @foreach (var mealType in Enum.GetValues<MealType>())
+                                    {
+                                        var typeMeals = dayMeals.Where(m => m.MealType == mealType).ToList();
+                                        @if (typeMeals.Any())
+                                        {
+                                            <div class="meal-pill @GetMealTypeClass(mealType) mb-1 rounded px-1 small" title="@mealType">
+                                                @foreach (var m in typeMeals)
+                                                {
+                                                    <div class="text-truncate" style="max-width: 110px;" title="@m.Title (@m.Servings ppl)">
+                                                        @m.Title
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    }
+                                </td>
+                            }
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Monthly Ingredient Tally -->
+    <div class="card mt-4 shadow-sm">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">📋 Monthly Ingredient Tally — @currentDate.ToString("MMMM yyyy")</h5>
+        </div>
+        <div class="card-body">
+            @if (monthlyTally == null || !monthlyTally.Any())
+            {
+                <p class="text-muted fst-italic mb-0">No ingredients tallied yet. Add meals with ingredients to see totals.</p>
+            }
+            else
+            {
+                decimal tallyTotal = monthlyTally.Where(t => t.PricePerUnit.HasValue).Sum(t => t.TotalQuantity * t.PricePerUnit!.Value);
+                bool tallyHasPrice = monthlyTally.Any(t => t.PricePerUnit.HasValue);
+                @if (tallyHasPrice)
+                {
+                    <div class="alert alert-success py-2 mb-2 fw-bold">Total Estimated Cost: @currencySymbol@tallyTotal.ToString("F2")</div>
+                }
+                <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
+                    <table class="table table-striped table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>Ingredient</th>
+                                <th class="text-end">Needed</th>
+                                <th>Unit</th>
+                                <th class="text-end">Est. Cost</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in monthlyTally)
+                            {
+                                <tr>
+                                    <td class="text-capitalize">@item.Name</td>
+                                    <td class="text-end">@item.TotalQuantity</td>
+                                    <td>@item.Unit</td>
+                                    <td class="text-end">@(item.PricePerUnit.HasValue ? $"{currencySymbol}{(item.TotalQuantity * item.PricePerUnit.Value):F2}" : "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Pantry (on hand) -->
+    <div class="card mt-3 shadow-sm">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">🏠 On Hand (Pantry)</h5>
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-light" @onclick="() => showDeductConfirm = true"
+                        disabled="@(monthlyTally == null || !monthlyTally.Any())">
+                    ➖ Deduct Month's Usage
+                </button>
+                <a href="/pantry" class="btn btn-outline-light">Manage Pantry</a>
+            </div>
+        </div>
+        <div class="card-body">
+            @if (pantryItems == null || !pantryItems.Any())
+            {
+                <p class="text-muted fst-italic mb-0">Pantry is empty. <a href="/pantry">Add ingredients you have on hand.</a></p>
+            }
+            else
+            {
+                <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
+                    <table class="table table-striped table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>Ingredient</th>
+                                <th class="text-end">Quantity</th>
+                                <th>Unit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in pantryItems)
+                            {
+                                <tr>
+                                    <td class="text-capitalize">@item.Ingredient?.Name</td>
+                                    <td class="text-end">@item.Quantity</td>
+                                    <td>@item.Ingredient?.Unit</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Shopping List (needed - on hand) -->
+    <div class="card mt-3 shadow-sm">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">🛒 Shopping List — @currentDate.ToString("MMMM yyyy")</h5>
+            @if (shoppingList != null && shoppingList.Any())
+            {
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-light" @onclick="ExportShoppingTxt">📥 .txt</button>
+                    <button class="btn btn-outline-light" @onclick="ExportShoppingCsv">📥 .csv</button>
+                </div>
+            }
+        </div>
+        <div class="card-body">
+            @if (shoppingList == null || !shoppingList.Any())
+            {
+                <p class="text-muted fst-italic mb-0">Nothing to buy — your pantry covers everything, or no meals are planned.</p>
+            }
+            else
+            {
+                decimal shopTotal = shoppingList.Where(t => t.PricePerUnit.HasValue).Sum(t => t.TotalQuantity * t.PricePerUnit!.Value);
+                bool shopHasPrice = shoppingList.Any(t => t.PricePerUnit.HasValue);
+                @if (shopHasPrice)
+                {
+                    <div class="alert alert-success py-2 mb-2 fw-bold">Total Shopping Cost: @currencySymbol@shopTotal.ToString("F2")</div>
+                }
+                <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
+                    <table class="table table-striped table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>Ingredient</th>
+                                <th class="text-end">Need to Buy</th>
+                                <th>Unit</th>
+                                <th class="text-end">Est. Cost</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in shoppingList)
+                            {
+                                <tr>
+                                    <td class="text-capitalize">@item.Name</td>
+                                    <td class="text-end">@item.TotalQuantity</td>
+                                    <td>@item.Unit</td>
+                                    <td class="text-end">@(item.PricePerUnit.HasValue ? $"{currencySymbol}{(item.TotalQuantity * item.PricePerUnit.Value):F2}" : "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<!-- Day Detail Modal -->
+@if (showDayDetail && selectedDay.HasValue)
+{
+    var dayDetailMeals = GetMealsForDay(selectedDay.Value);
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);" @onclick="CloseDayDetail">
+        <div class="modal-dialog modal-dialog-scrollable" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">📅 @selectedDay.Value.ToString("dddd, MMMM d, yyyy")</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseDayDetail"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!dayDetailMeals.Any())
+                    {
+                        <p class="text-muted fst-italic">No meals planned for this day.</p>
+                    }
+                    else
+                    {
+                        @foreach (var mealType in Enum.GetValues<MealType>())
+                        {
+                            var typeMeals = dayDetailMeals.Where(m => m.MealType == mealType).ToList();
+                            @if (typeMeals.Any())
+                            {
+                                <h6 class="mt-2 mb-1">
+                                    @(mealType switch { MealType.Breakfast => "🌅", MealType.Lunch => "🥗", MealType.Dinner => "🍽️", _ => "" })
+                                    @mealType
+                                </h6>
+                                @foreach (var meal in typeMeals)
+                                {
+                                    <div class="card mb-2 @GetMealTypeClass(mealType)">
+                                        <div class="card-body py-2 px-3">
+                                            <div class="d-flex justify-content-between align-items-start">
+                                                <div>
+                                                    <strong>@meal.Title</strong>
+                                                    <span class="text-muted small ms-1">(@meal.Servings ppl)</span>
+                                                    @{
+                                                        var effectiveIngs = GetMealIngredients(meal);
+                                                        decimal mealCost = 0;
+                                                        bool mealHasPrice = false;
+                                                        foreach (var mIng in effectiveIngs)
+                                                        {
+                                                            if (mIng.PricePerUnit != null)
+                                                            {
+                                                                mealCost += mIng.Quantity * mIng.PricePerUnit.Value;
+                                                                mealHasPrice = true;
+                                                            }
+                                                        }
+                                                    }
+                                                    @if (mealHasPrice)
+                                                    {
+                                                        <span class="badge bg-success ms-1">@currencySymbol@mealCost.ToString("F2")</span>
+                                                    }
+                                                    @{ var effectiveDesc = GetMealDescription(meal); }
+                                                    @if (!string.IsNullOrEmpty(effectiveDesc))
+                                                    {
+                                                        <div class="small text-muted">@effectiveDesc</div>
+                                                    }
+                                                    @if (effectiveIngs.Any())
+                                                    {
+                                                        <div class="small mt-1">
+                                                            @foreach (var ing in effectiveIngs)
+                                                            {
+                                                                <span class="badge bg-light text-dark me-1">@ing.Quantity @ing.Unit @ing.Name</span>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                                <div class="btn-group btn-group-sm ms-2 flex-shrink-0">
+                                                    <button class="btn btn-outline-primary" title="Edit" @onclick="() => StartEditMeal(meal)">✏️</button>
+                                                    <button class="btn btn-outline-danger" title="Delete" @onclick="() => ConfirmDeleteMeal(meal)">🗑️</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        }
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-success" @onclick="() => AddMealForDay(selectedDay.Value)">
+                        ➕ Add Meal
+                    </button>
+                    <button class="btn btn-secondary" @onclick="CloseDayDetail">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Delete Confirm Modal -->
+@if (showDeleteConfirm && mealToDelete != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">🗑️ Delete Meal</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => showDeleteConfirm = false"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete <strong>@mealToDelete.Title</strong> (@mealToDelete.MealType) on @mealToDelete.Date.ToString("MMM d, yyyy")?</p>
+                    @if (deleteRangeGroupId.HasValue)
+                    {
+                        <p class="text-muted small">This meal belongs to a range group. You can delete just this meal or the entire group.</p>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showDeleteConfirm = false">Cancel</button>
+                    @if (deleteRangeGroupId.HasValue)
+                    {
+                        <button class="btn btn-danger" @onclick="DeleteConfirmedRange">Delete Group</button>
+                    }
+                    <button class="btn btn-danger" @onclick="DeleteConfirmedMeal">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Add/Edit Meal Modal -->
+@if (showModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">
+                        @(editingMeal.Id == 0 ? "➕ Add New Meal" : "✏️ Edit Meal")
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseModal"></button>
+                </div>
+                <EditForm Model="editingMeal" OnValidSubmit="SaveMeal">
+                <div class="modal-body">
+                                    <DataAnnotationsValidator />
+                                    <div class="row g-3">
+                                        @if (editingMeal.Id == 0 || currentRangeGroupId.HasValue)
+                                        {
+                                        <div class="col-12">
+                                            <div class="form-check form-switch mb-2">
+                                                <input class="form-check-input" type="checkbox" id="dateRangeToggle"
+                                                       checked="@useDateRange" @onchange="OnDateRangeToggle" />
+                                                <label class="form-check-label fw-bold" for="dateRangeToggle">
+                                                    @(editingMeal.Id == 0 ? "Apply to date range" : "Apply change to all meals in this group")
+                                                </label>
+                                            </div>
+                                        </div>
+                                        }
+                                        @if (useDateRange && editingMeal.Id == 0)
+                                        {
+                                            <div class="col-md-6">
+                                                <label class="form-label fw-bold">Start Date</label>
+                                                <InputDate @bind-Value="rangeStartDate" class="form-control" />
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label fw-bold">End Date</label>
+                                                <InputDate @bind-Value="rangeEndDate" class="form-control" />
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="col-md-6">
+                                                <label class="form-label fw-bold">Date</label>
+                                                <InputDate @bind-Value="editingMeal.Date" class="form-control" />
+                                            </div>
+                                        }
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-bold">Meal Type</label>
+                                            <InputSelect @bind-Value="editingMeal.MealType" class="form-select">
+                                                @foreach (var mt in Enum.GetValues<MealType>())
+                                                {
+                                                    <option value="@mt">@mt</option>
+                                                }
+                                            </InputSelect>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-bold">Servings (people)</label>
+                                            <input type="number" class="form-control" min="1" value="@editingMeal.Servings"
+                                                   @onchange="OnServingsChanged" />
+                                        </div>
+
+                                        <!-- Recipe Book Filter -->
+                                        <div class="col-12">
+                                            <label class="form-label fw-bold">Filter by Book</label>
+                                            <select class="form-select" value="@selectedBookId" @onchange="OnBookFilterChanged">
+                                                <option value="0">-- All Recipes --</option>
+                                                @foreach (var b in allBooks)
+                                                {
+                                                    <option value="@b.Id">@b.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+
+                                        <!-- Recipe Selection -->
+                                        <div class="col-12">
+                                            <label class="form-label fw-bold">Use Recipe (optional)</label>
+                                            <select class="form-select" value="@selectedRecipeId" @onchange="OnRecipeSelected">
+                                                <option value="0">-- No recipe (manual entry) --</option>
+                                                @foreach (var r in FilteredRecipes)
+                                                {
+                                                    <option value="@r.Id">@r.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+
+                                        <div class="col-12">
+                                            <label class="form-label fw-bold">Meal Title</label>
+                                            <InputText @bind-Value="editingMeal.Title" class="form-control" placeholder="e.g., Grilled Chicken Salad" />
+                                            <ValidationMessage For="() => editingMeal.Title" />
+                                        </div>
+                                        <div class="col-12">
+                                            <label class="form-label fw-bold">Description (optional)</label>
+                                            <InputTextArea @bind-Value="editingMeal.Description" class="form-control" rows="2"
+                                                           placeholder="Notes, instructions..." />
+                                        </div>
+
+                                        <!-- Ingredients -->
+                                        <div class="col-12">
+                                            <label class="form-label fw-bold">Ingredients</label>
+                                            @if (!allIngredients.Any())
+                                            {
+                                                <div class="alert alert-warning small py-2">No ingredients defined yet. <a href="/ingredients">Add ingredients first.</a></div>
+                                            }
+                                            @for (int i = 0; i < editingIngredients.Count; i++)
+                                            {
+                                                var idx = i;
+                                                <div class="row g-2 mb-2 align-items-end">
+                                                    <div class="col-md-6">
+                                                        <select @bind="editingIngredients[idx].IngredientId" class="form-select form-select-sm">
+                                                            <option value="0">-- Select ingredient --</option>
+                                                            @foreach (var ing in allIngredients)
+                                                            {
+                                                                <option value="@ing.Id">@ing.Name (@ing.Unit)</option>
+                                                            }
+                                                        </select>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <input @bind="editingIngredients[idx].Quantity" type="number" step="0.01"
+                                                               class="form-control form-control-sm" placeholder="Qty" />
+                                                    </div>
+                                                    <div class="col-md-2">
+                                                        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemoveEditIngredient(idx)">✕</button>
+                                                    </div>
+                                                </div>
+                                            }
+                                            <button type="button" class="btn btn-sm btn-outline-success mt-1" @onclick="AddEditIngredient">+ Add Ingredient</button>
+                                            @{
+                                                decimal mealEditCost = 0;
+                                                bool mealEditHasPrice = false;
+                                                foreach (var ei in editingIngredients)
+                                                {
+                                                    var ing = allIngredients.FirstOrDefault(i => i.Id == ei.IngredientId);
+                                                    if (ing?.PricePerUnit != null)
+                                                    {
+                                                        mealEditCost += ei.Quantity * ing.PricePerUnit.Value;
+                                                        mealEditHasPrice = true;
+                                                    }
+                                                }
+                                            }
+                                            @if (mealEditHasPrice)
+                                            {
+                                                <div class="mt-2 fw-bold text-success">Estimated Cost: @currencySymbol@mealEditCost.ToString("F2")</div>
+                                            }
+                                        </div>
+                                    </div>
+                                    
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-success">
+                        @(editingMeal.Id == 0 ? "💾 Add Meal" : "💾 Save Changes")
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseModal">Cancel</button>
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">Close</button>
+                </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showDeductConfirm)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title">⚠️ Deduct Monthly Usage</h5>
+                    <button type="button" class="btn-close" @onclick="() => showDeductConfirm = false"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to deduct this month's ingredient usage from your pantry?</p>
+                    <p class="text-muted small">This will subtract the amounts needed for <strong>@currentDate.ToString("MMMM yyyy")</strong> from your pantry. Items that reach zero or below will be removed.</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showDeductConfirm = false">Cancel</button>
+                    <button class="btn btn-warning" @onclick="DeductFromPantry">Yes, Deduct</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showCopyMonthModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">📋 Copy Month</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => showCopyMonthModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Copy all meals from <strong>@currentDate.ToString("MMMM yyyy")</strong> to another month.</p>
+                    @if (!string.IsNullOrEmpty(copyMonthError))
+                    {
+                        <div class="alert alert-danger py-2">@copyMonthError</div>
+                    }
+                    @if (!string.IsNullOrEmpty(copyMonthSuccess))
+                    {
+                        <div class="alert alert-success py-2">@copyMonthSuccess</div>
+                    }
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <label class="form-label fw-bold">Target Month</label>
+                            <select class="form-select" @bind="copyTargetMonth">
+                                @for (int m = 1; m <= 12; m++)
+                                {
+                                    <option value="@m">@System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(m)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-bold">Target Year</label>
+                            <input type="number" class="form-control" @bind="copyTargetYear" min="2020" max="2100" />
+                        </div>
+                    </div>
+                    <p class="text-muted small mt-2">Meals on days that don't exist in the target month (e.g. the 31st) will be skipped.</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showCopyMonthModal = false">Cancel</button>
+                    <button class="btn btn-primary" @onclick="CopyMonth" disabled="@copyingMonth">
+                        @(copyingMonth ? "Copying..." : "Copy Meals")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .calendar-table td {
+        height: 110px;
+        padding: 4px !important;
+        transition: background-color 0.15s;
+    }
+    .calendar-table td:hover {
+        background-color: #e8f0fe !important;
+    }
+    .meal-pill {
+        font-size: 0.75rem;
+        padding: 1px 4px;
+    }
+    .bg-meal-breakfast { background-color: #fff3cd; }
+    .bg-meal-lunch { background-color: #d1e7dd; }
+    .bg-meal-dinner { background-color: #cff4fc; }
+    .modal-dialog-scrollable .modal-content > form {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+</style>
+
+@code {
+    private DateTime currentDate = DateTime.Today;
+    private List<Meal> monthMeals = new();
+    private List<IngredientTally> monthlyTally = new();
+    private List<PantryItem> pantryItems = new();
+    private List<IngredientTally> shoppingList = new();
+    private List<Recipe> allRecipes = new();
+    private List<RecipeBook> allBooks = new();
+    private int selectedBookId;
+    private List<Ingredient> allIngredients = new();
+    private string currencySymbol = "$";
+    private bool showModal = false;
+    private bool showDeductConfirm = false;
+    private Meal editingMeal = new();
+    private List<MealIngredient> editingIngredients = new();
+    private int selectedRecipeId;
+    private int daysInMonth;
+    private bool useDateRange = false;
+    private DateTime rangeStartDate = DateTime.Today;
+    private DateTime rangeEndDate = DateTime.Today;
+    private Guid? currentRangeGroupId;
+    private bool showCopyMonthModal = false;
+    private bool showDayDetail = false;
+    private DateTime? selectedDay;
+    private bool showDeleteConfirm = false;
+    private Meal? mealToDelete;
+    private Guid? deleteRangeGroupId;
+    private int copyTargetMonth = DateTime.Today.AddMonths(1).Month;
+    private int copyTargetYear = DateTime.Today.AddMonths(1).Year;
+    private bool copyingMonth = false;
+    private string copyMonthError = string.Empty;
+    private string copyMonthSuccess = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMonthData();
+        allRecipes = await RecipeService.GetAllRecipesAsync();
+        allBooks = await BookService.GetAllBooksAsync();
+        allIngredients = await IngredientService.GetAllAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            currencySymbol = await JS.InvokeAsync<string>("currencySymbol.get");
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadMonthData()
+    {
+        daysInMonth = DateTime.DaysInMonth(currentDate.Year, currentDate.Month);
+        monthMeals = await MealService.GetMealsForMonthAsync(currentDate.Year, currentDate.Month);
+        monthlyTally = await MealService.GetMonthlyTallyAsync(currentDate.Year, currentDate.Month);
+        pantryItems = await PantryService.GetAllAsync();
+        ComputeShoppingList();
+    }
+
+    private void ComputeShoppingList()
+    {
+        var pantryLookup = pantryItems
+            .GroupBy(p => p.IngredientId)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.Quantity));
+
+        shoppingList = monthlyTally
+            .Select(t =>
+            {
+                decimal onHand = pantryLookup.TryGetValue(t.IngredientId, out var qty) ? qty : 0;
+                decimal toBuy = t.TotalQuantity - onHand;
+                return new IngredientTally { IngredientId = t.IngredientId, Name = t.Name, Unit = t.Unit, TotalQuantity = Math.Max(0, toBuy), PricePerUnit = t.PricePerUnit };
+            })
+            .Where(t => t.TotalQuantity > 0)
+            .ToList();
+    }
+
+    private List<Meal> GetMealsForDay(DateTime date)
+    {
+        return monthMeals.Where(m => m.Date.Date == date.Date).ToList();
+    }
+
+    private List<DateTime?[]> GetCalendarWeeks()
+    {
+        var weeks = new List<DateTime?[]>();
+        var firstDay = new DateTime(currentDate.Year, currentDate.Month, 1);
+        int startDow = (int)firstDay.DayOfWeek;
+
+        var week = new DateTime?[7];
+        for (int day = 1; day <= daysInMonth; day++)
+        {
+            var date = new DateTime(currentDate.Year, currentDate.Month, day);
+            int col = (startDow + day - 1) % 7;
+            if (day > 1 && col == 0)
+            {
+                weeks.Add(week);
+                week = new DateTime?[7];
+            }
+            week[col] = date;
+        }
+        weeks.Add(week);
+        return weeks;
+    }
+
+    private async Task PreviousMonth()
+    {
+        currentDate = currentDate.AddMonths(-1);
+        await LoadMonthData();
+    }
+
+    private async Task NextMonth()
+    {
+        currentDate = currentDate.AddMonths(1);
+        await LoadMonthData();
+    }
+
+    private async Task StartAddMealFromMain()
+    {
+        allRecipes = await RecipeService.GetAllRecipesAsync();
+        allBooks = await BookService.GetAllBooksAsync();
+        allIngredients = await IngredientService.GetAllAsync();
+        editingMeal = new Meal
+        {
+            Date = DateTime.Today,
+            MealType = MealType.Breakfast,
+            Servings = 1
+        };
+        editingIngredients = new List<MealIngredient> { new() };
+        selectedRecipeId = 0;
+        selectedBookId = 0;
+        useDateRange = false;
+        rangeStartDate = DateTime.Today;
+        rangeEndDate = DateTime.Today;
+        currentRangeGroupId = null;
+        showModal = true;
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+    }
+
+    private IEnumerable<Recipe> FilteredRecipes =>
+        selectedBookId > 0
+            ? allRecipes.Where(r => allBooks
+                .FirstOrDefault(b => b.Id == selectedBookId)?.Entries
+                .Any(e => e.RecipeId == r.Id) == true)
+            : allRecipes;
+
+    private void OnBookFilterChanged(ChangeEventArgs e)
+    {
+        selectedBookId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        selectedRecipeId = 0;
+        editingMeal.RecipeId = null;
+    }
+
+    private void OnRecipeSelected(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var recipeId) && recipeId > 0)
+        {
+            selectedRecipeId = recipeId;
+            var recipe = allRecipes.FirstOrDefault(r => r.Id == recipeId);
+            if (recipe != null)
+            {
+                editingMeal.Title = recipe.Name;
+                editingMeal.Description = recipe.Description;
+                editingMeal.RecipeId = recipe.Id;
+                ScaleIngredientsFromRecipe(recipe);
+            }
+        }
+        else
+        {
+            selectedRecipeId = 0;
+            editingMeal.RecipeId = null;
+        }
+    }
+
+    private void ScaleIngredientsFromRecipe(Recipe recipe)
+    {
+        int recipeServings = recipe.Servings > 0 ? recipe.Servings : 1;
+        int mealServings = editingMeal.Servings > 0 ? editingMeal.Servings : 1;
+        decimal scale = (decimal)mealServings / recipeServings;
+
+        editingIngredients = recipe.Ingredients.Select(ri => new MealIngredient
+        {
+            IngredientId = ri.IngredientId,
+            Quantity = Math.Round(ri.Quantity * scale, 2)
+        }).ToList();
+        if (!editingIngredients.Any()) editingIngredients.Add(new());
+    }
+
+    private void OnServingsChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var servings) && servings > 0)
+        {
+            editingMeal.Servings = servings;
+            // Re-scale from recipe if one is selected
+            if (selectedRecipeId > 0)
+            {
+                var recipe = allRecipes.FirstOrDefault(r => r.Id == selectedRecipeId);
+                if (recipe != null)
+                    ScaleIngredientsFromRecipe(recipe);
+            }
+        }
+    }
+
+    private void AddEditIngredient()=> editingIngredients.Add(new());
+
+    private void OnDateRangeToggle(ChangeEventArgs e)
+    {
+        useDateRange = (bool)(e.Value ?? false);
+        if (useDateRange)
+        {
+            rangeStartDate = editingMeal.Date;
+            rangeEndDate = editingMeal.Date;
+        }
+    }
+
+    private void RemoveEditIngredient(int idx)
+    {
+        if (editingIngredients.Count > 1)
+            editingIngredients.RemoveAt(idx);
+    }
+
+    private async Task SaveMeal()
+    {
+        if (string.IsNullOrWhiteSpace(editingMeal.Title)) return;
+
+        var validIngredients = editingIngredients
+            .Where(i => i.IngredientId > 0)
+            .ToList();
+
+        if (editingMeal.Id == 0 && useDateRange)
+        {
+            var start = rangeStartDate.Date;
+            var end = rangeEndDate.Date;
+            if (end < start) (start, end) = (end, start);
+
+            var rangeGroupId = Guid.NewGuid();
+            for (var date = start; date <= end; date = date.AddDays(1))
+            {
+                var meal = new Meal
+                {
+                    Date = date,
+                    MealType = editingMeal.MealType,
+                    Title = editingMeal.Title,
+                    Description = editingMeal.Description,
+                    Servings = editingMeal.Servings,
+                    RecipeId = editingMeal.RecipeId
+                };
+                var ings = validIngredients.Select(i => new MealIngredient
+                {
+                    IngredientId = i.IngredientId,
+                    Quantity = i.Quantity
+                }).ToList();
+                await MealService.CreateMealAsync(meal, ings, rangeGroupId);
+            }
+        }
+        else if (editingMeal.Id == 0)
+        {
+            await MealService.CreateMealAsync(editingMeal, validIngredients);
+        }
+        else if (useDateRange && currentRangeGroupId.HasValue)
+        {
+            await MealService.UpdateMealRangeAsync(editingMeal, validIngredients, currentRangeGroupId.Value);
+        }
+        else
+        {
+            await MealService.UpdateMealAsync(editingMeal, validIngredients);
+        }
+
+        await LoadMonthData();
+        showModal = false;
+    }
+
+    private async Task DeleteMeal(int id)
+    {
+        await MealService.DeleteMealAsync(id);
+        await LoadMonthData();
+    }
+
+    private async Task ExportShoppingTxt()
+    {
+        if (shoppingList == null || !shoppingList.Any()) return;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Shopping List — {currentDate.ToString("MMMM yyyy")}");
+        sb.AppendLine(new string('=', 50));
+        sb.AppendLine();
+
+        decimal grandTotal = 0;
+        foreach (var item in shoppingList)
+        {
+            var costStr = item.PricePerUnit.HasValue ? $"  ({currencySymbol}{(item.TotalQuantity * item.PricePerUnit.Value):F2})" : "";
+            sb.AppendLine($"  {item.TotalQuantity} {item.Unit}  {item.Name}{costStr}");
+            if (item.PricePerUnit.HasValue) grandTotal += item.TotalQuantity * item.PricePerUnit.Value;
+        }
+
+        if (grandTotal > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"  Estimated Total: {currencySymbol}{grandTotal:F2}");
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = $"ingredients-{currentDate:yyyy-MM}.txt";
+
+        await JS.InvokeVoidAsync("eval",
+            $"var a=document.createElement('a');a.href='data:text/plain;base64,{base64}';a.download='{fileName}';document.body.appendChild(a);a.click();a.remove();");
+    }
+
+    private async Task ExportShoppingCsv()
+    {
+        if (shoppingList == null || !shoppingList.Any()) return;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Ingredient,Quantity,Unit,PricePerUnit,EstCost");
+
+        foreach (var item in shoppingList)
+        {
+            var name = item.Name.Replace("\"", "\"\"");
+            var price = item.PricePerUnit.HasValue ? item.PricePerUnit.Value.ToString("F2") : "";
+            var cost = item.PricePerUnit.HasValue ? (item.TotalQuantity * item.PricePerUnit.Value).ToString("F2") : "";
+            sb.AppendLine($"\"{name}\",{item.TotalQuantity},\"{item.Unit}\",{price},{cost}");
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = $"shopping-list-{currentDate:yyyy-MM}.csv";
+
+        await JS.InvokeVoidAsync("eval",
+            $"var a=document.createElement('a');a.href='data:text/csv;base64,{base64}';a.download='{fileName}';document.body.appendChild(a);a.click();a.remove();");
+    }
+
+    private string GetMealTypeClass(MealType type) => type switch
+    {
+        MealType.Breakfast => "bg-meal-breakfast",
+        MealType.Lunch => "bg-meal-lunch",
+        MealType.Dinner => "bg-meal-dinner",
+        _ => ""
+    };
+
+    private string? GetMealDescription(Meal m) => m.Recipe?.Description ?? m.Description;
+
+    private List<(int IngredientId, string? Name, string? Unit, decimal? PricePerUnit, decimal Quantity)> GetMealIngredients(Meal m)
+    {
+        if (m.Recipe != null && m.Recipe.Ingredients.Any())
+        {
+            int recipeServings = m.Recipe.Servings > 0 ? m.Recipe.Servings : 1;
+            int mealServings = m.Servings > 0 ? m.Servings : 1;
+            decimal scale = (decimal)mealServings / recipeServings;
+            return m.Recipe.Ingredients.Select(ri => (
+                ri.IngredientId,
+                ri.Ingredient?.Name,
+                ri.Ingredient?.Unit,
+                ri.Ingredient?.PricePerUnit,
+                Math.Round(ri.Quantity * scale, 2)
+            )).ToList();
+        }
+        return m.Ingredients.Select(mi => (
+            mi.IngredientId,
+            mi.Ingredient?.Name,
+            mi.Ingredient?.Unit,
+            mi.Ingredient?.PricePerUnit,
+            mi.Quantity
+        )).ToList();
+    }
+
+    private async Task DeductFromPantry()
+    {
+        if (monthlyTally == null || !monthlyTally.Any()) return;
+
+        var amounts = monthlyTally.ToDictionary(t => t.IngredientId, t => t.TotalQuantity);
+        await PantryService.DeductAsync(amounts);
+        await LoadMonthData();
+        showDeductConfirm = false;
+    }
+
+    private void OpenDayDetail(DateTime day)
+    {
+        selectedDay = day;
+        showDayDetail = true;
+    }
+
+    private void CloseDayDetail()
+    {
+        showDayDetail = false;
+    }
+
+    private async Task AddMealForDay(DateTime day)
+    {
+        showDayDetail = false;
+        allRecipes = await RecipeService.GetAllRecipesAsync();
+        allBooks = await BookService.GetAllBooksAsync();
+        allIngredients = await IngredientService.GetAllAsync();
+        editingMeal = new Meal
+        {
+            Date = day,
+            MealType = MealType.Breakfast,
+            Servings = 1
+        };
+        editingIngredients = new List<MealIngredient> { new() };
+        selectedRecipeId = 0;
+        selectedBookId = 0;
+        useDateRange = false;
+        rangeStartDate = day;
+        rangeEndDate = day;
+        currentRangeGroupId = null;
+        showModal = true;
+    }
+
+    private async Task StartEditMeal(Meal meal)
+    {
+        showDayDetail = false;
+        allRecipes = await RecipeService.GetAllRecipesAsync();
+        allBooks = await BookService.GetAllBooksAsync();
+        allIngredients = await IngredientService.GetAllAsync();
+        editingMeal = new Meal
+        {
+            Id = meal.Id,
+            Date = meal.Date,
+            MealType = meal.MealType,
+            Title = meal.Title,
+            Description = meal.Description,
+            Servings = meal.Servings,
+            RecipeId = meal.RecipeId
+        };
+        // Use live recipe ingredients (scaled) when linked, otherwise meal's own
+        if (meal.Recipe != null && meal.Recipe.Ingredients.Any())
+        {
+            var recipe = meal.Recipe;
+            int recipeServings = recipe.Servings > 0 ? recipe.Servings : 1;
+            int mealServings = meal.Servings > 0 ? meal.Servings : 1;
+            decimal scale = (decimal)mealServings / recipeServings;
+            editingIngredients = recipe.Ingredients.Select(ri => new MealIngredient
+            {
+                IngredientId = ri.IngredientId,
+                Quantity = Math.Round(ri.Quantity * scale, 2)
+            }).ToList();
+        }
+        else
+        {
+            editingIngredients = meal.Ingredients.Select(i => new MealIngredient
+            {
+                Id = i.Id,
+                MealId = i.MealId,
+                IngredientId = i.IngredientId,
+                Quantity = i.Quantity
+            }).ToList();
+        }
+        if (!editingIngredients.Any()) editingIngredients.Add(new());
+        selectedRecipeId = meal.RecipeId ?? 0;
+        selectedBookId = 0;
+        useDateRange = false;
+        currentRangeGroupId = await MealService.GetRangeGroupIdAsync(meal.Id);
+        showModal = true;
+    }
+
+    private async Task ConfirmDeleteMeal(Meal meal)
+    {
+        mealToDelete = meal;
+        deleteRangeGroupId = await MealService.GetRangeGroupIdAsync(meal.Id);
+        showDeleteConfirm = true;
+    }
+
+    private async Task DeleteConfirmedMeal()
+    {
+        if (mealToDelete != null)
+        {
+            await MealService.DeleteMealAsync(mealToDelete.Id);
+            await LoadMonthData();
+            mealToDelete = null;
+            deleteRangeGroupId = null;
+            showDeleteConfirm = false;
+        }
+    }
+
+    private async Task DeleteConfirmedRange()
+    {
+        if (deleteRangeGroupId.HasValue)
+        {
+            await MealService.DeleteMealRangeAsync(deleteRangeGroupId.Value);
+            await LoadMonthData();
+            mealToDelete = null;
+            deleteRangeGroupId = null;
+            showDeleteConfirm = false;
+        }
+    }
+
+    private void OpenCopyMonthModal()
+    {
+        var target = currentDate.AddMonths(1);
+        copyTargetMonth = target.Month;
+        copyTargetYear = target.Year;
+        copyMonthError = string.Empty;
+        copyMonthSuccess = string.Empty;
+        copyingMonth = false;
+        showCopyMonthModal = true;
+    }
+
+    private async Task CopyMonth()
+    {
+        copyMonthError = string.Empty;
+        copyMonthSuccess = string.Empty;
+
+        if (copyTargetYear == currentDate.Year && copyTargetMonth == currentDate.Month)
+        {
+            copyMonthError = "Target month cannot be the same as the current month.";
+            return;
+        }
+
+        if (!monthMeals.Any())
+        {
+            copyMonthError = "No meals to copy in the current month.";
+            return;
+        }
+
+        copyingMonth = true;
+        try
+        {
+            int copied = await MealService.CopyMonthAsync(currentDate.Year, currentDate.Month, copyTargetYear, copyTargetMonth);
+            copyMonthSuccess = $"Successfully copied {copied} meal(s) to {new DateTime(copyTargetYear, copyTargetMonth, 1):MMMM yyyy}.";
+        }
+        catch (Exception ex)
+        {
+            copyMonthError = $"Error copying meals: {ex.Message}";
+        }
+        finally
+        {
+            copyingMonth = false;
+        }
+    }
+
+}

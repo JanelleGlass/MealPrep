@@ -1,0 +1,493 @@
+@page "/nutrition"
+@using MealPrep.Data
+@using MealPrep.Services
+@inject NutritionService NutritionService
+@inject IJSRuntime JS
+<PageTitle>Nutrition</PageTitle>
+
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0 text-primary fw-bold">Nutrition</h2>
+        <button class="btn btn-outline-secondary" @onclick="ToggleCsvImport">CSV Import</button>
+    </div>
+
+    @* ===== CSV Import Section ===== *@
+    @if (showCsvImport)
+    {
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-secondary text-white">USDA CSV Import</div>
+            <div class="card-body">
+                <p class="text-muted mb-2">Upload a CSV file exported from the USDA nutrition spreadsheet.</p>
+                <InputFile OnChange="HandleCsvUpload" accept=".csv" class="form-control mb-2" />
+                @if (!string.IsNullOrEmpty(importMessage))
+                {
+                    <div class="alert @(importSuccess ? "alert-success" : "alert-danger") mt-2">@importMessage</div>
+                }
+            </div>
+        </div>
+    }
+
+    @* ===== Ingredients with Nutrition Status ===== *@
+    @if (ingredients == null)
+    {
+        <p class="text-muted">Loading...</p>
+    }
+    else
+    {
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white fw-bold">Ingredients &mdash; Nutrition Links</div>
+            <div class="card-body p-0">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Ingredient</th>
+                            <th>Unit</th>
+                            <th>Linked Nutrition</th>
+                            <th>Cal</th>
+                            <th>Protein</th>
+                            <th>Carbs</th>
+                            <th>Fat</th>
+                            <th style="width:200px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var ing in ingredients)
+                        {
+                            <tr>
+                                <td>@ing.Name</td>
+                                <td>@ing.Unit</td>
+                                <td>@(ing.Nutrition?.Description ?? "Not linked")</td>
+                                <td>@(ing.Nutrition?.Energy_Kcal?.ToString("F0") ?? "—")</td>
+                                <td>@(ing.Nutrition?.Protein_g?.ToString("F1") ?? "—")</td>
+                                <td>@(ing.Nutrition?.Carbohydrt_g?.ToString("F1") ?? "—")</td>
+                                <td>@(ing.Nutrition?.Lipid_Tot_g?.ToString("F1") ?? "—")</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        @if (ing.NutritionId.HasValue)
+                                        {
+                                            <button class="btn btn-outline-info" @onclick="() => ShowNutritionDetail(ing)">View</button>
+                                        }
+                                        <button class="btn btn-outline-primary" @onclick="() => StartLink(ing)">
+                                            @(ing.NutritionId.HasValue ? "Change" : "Link")
+                                        </button>
+                                        @if (ing.NutritionId.HasValue)
+                                        {
+                                            <button class="btn btn-outline-danger" @onclick="() => Unlink(ing.Id)">Unlink</button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@* ===== Link Modal ===== *@
+@if (showLinkModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">Link Nutrition to @linkingIngredient?.Name</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseLinkModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex gap-2 mb-3">
+                        <input type="text" class="form-control" placeholder="Search USDA foods..." @bind="usdaSearchTerm" @bind:event="oninput" @onkeyup="HandleSearchKeyUp" />
+                        <button class="btn btn-primary" @onclick="SearchUSDA">Search</button>
+                        <button class="btn btn-outline-secondary" @onclick="StartManualEntry">Manual Entry</button>
+                    </div>
+                    @if (searchResults != null && searchResults.Any())
+                    {
+                        <div style="max-height:400px;overflow-y:auto;">
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th>Description</th>
+                                        <th>Cal</th>
+                                        <th>Protein(g)</th>
+                                        <th>Carbs(g)</th>
+                                        <th>Fat(g)</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var r in searchResults)
+                                    {
+                                        <tr>
+                                            <td>@r.Description</td>
+                                            <td>@(r.Energy_Kcal?.ToString("F0") ?? "—")</td>
+                                            <td>@(r.Protein_g?.ToString("F1") ?? "—")</td>
+                                            <td>@(r.Carbohydrt_g?.ToString("F1") ?? "—")</td>
+                                            <td>@(r.Lipid_Tot_g?.ToString("F1") ?? "—")</td>
+                                            <td><button class="btn btn-sm btn-success" @onclick="() => SelectNutrition(r.Id)">Select</button></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else if (searchResults != null)
+                    {
+                        <p class="text-muted">No results found. Try a different search term or use Manual Entry.</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ===== Manual Entry Modal ===== *@
+@if (showManualModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">Manual Nutrition Entry for @linkingIngredient?.Name</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseManualModal"></button>
+                </div>
+                <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Description</label>
+                        <input @bind="manualEntry.Description" class="form-control" placeholder="e.g., Chicken breast, raw" />
+                    </div>
+
+                    <h6 class="text-primary mt-3">Macros (per 100g)</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><label class="form-label">Calories (kcal)</label><input type="number" step="0.1" @bind="manualEntry.Energy_Kcal" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Protein (g)</label><input type="number" step="0.1" @bind="manualEntry.Protein_g" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Carbs (g)</label><input type="number" step="0.1" @bind="manualEntry.Carbohydrt_g" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Fat (g)</label><input type="number" step="0.1" @bind="manualEntry.Lipid_Tot_g" class="form-control" /></div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><label class="form-label">Fiber (g)</label><input type="number" step="0.1" @bind="manualEntry.Fiber_TD_g" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Sugar (g)</label><input type="number" step="0.1" @bind="manualEntry.Sugar_Tot_g" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Water (g)</label><input type="number" step="0.1" @bind="manualEntry.Water_g" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Ash (g)</label><input type="number" step="0.1" @bind="manualEntry.Ash_g" class="form-control" /></div>
+                    </div>
+
+                    <h6 class="text-primary mt-3">Minerals</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><label class="form-label">Calcium (mg)</label><input type="number" step="0.1" @bind="manualEntry.Calcium_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Iron (mg)</label><input type="number" step="0.01" @bind="manualEntry.Iron_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Magnesium (mg)</label><input type="number" step="0.1" @bind="manualEntry.Magnesium_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Phosphorus (mg)</label><input type="number" step="0.1" @bind="manualEntry.Phosphorus_mg" class="form-control" /></div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><label class="form-label">Potassium (mg)</label><input type="number" step="0.1" @bind="manualEntry.Potassium_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Sodium (mg)</label><input type="number" step="0.1" @bind="manualEntry.Sodium_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Zinc (mg)</label><input type="number" step="0.01" @bind="manualEntry.Zinc_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Copper (mg)</label><input type="number" step="0.001" @bind="manualEntry.Copper_mg" class="form-control" /></div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><label class="form-label">Manganese (mg)</label><input type="number" step="0.001" @bind="manualEntry.Manganese_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Selenium (ug)</label><input type="number" step="0.1" @bind="manualEntry.Selenium_ug" class="form-control" /></div>
+                    </div>
+
+                    <h6 class="text-primary mt-3">Vitamins</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><label class="form-label">Vit C (mg)</label><input type="number" step="0.1" @bind="manualEntry.Vit_C_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Thiamin (mg)</label><input type="number" step="0.001" @bind="manualEntry.Thiamin_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Riboflavin (mg)</label><input type="number" step="0.001" @bind="manualEntry.Riboflavin_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Niacin (mg)</label><input type="number" step="0.01" @bind="manualEntry.Niacin_mg" class="form-control" /></div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><label class="form-label">Vit B6 (mg)</label><input type="number" step="0.001" @bind="manualEntry.Vit_B6_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Vit B12 (ug)</label><input type="number" step="0.01" @bind="manualEntry.Vit_B12_ug" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Folate (ug)</label><input type="number" step="0.1" @bind="manualEntry.Folate_Tot_ug" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Choline (mg)</label><input type="number" step="0.1" @bind="manualEntry.Choline_Tot_mg" class="form-control" /></div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><label class="form-label">Vit A (IU)</label><input type="number" step="1" @bind="manualEntry.Vit_A_IU" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Vit D (IU)</label><input type="number" step="1" @bind="manualEntry.Vit_D_IU" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Vit E (mg)</label><input type="number" step="0.01" @bind="manualEntry.Vit_E_mg" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Vit K (ug)</label><input type="number" step="0.1" @bind="manualEntry.Vit_K_ug" class="form-control" /></div>
+                    </div>
+
+                    <h6 class="text-primary mt-3">Fatty Acids</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><label class="form-label">Saturated (g)</label><input type="number" step="0.01" @bind="manualEntry.FA_Sat_g" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Monounsat (g)</label><input type="number" step="0.01" @bind="manualEntry.FA_Mono_g" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Polyunsat (g)</label><input type="number" step="0.01" @bind="manualEntry.FA_Poly_g" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Cholesterol (mg)</label><input type="number" step="0.1" @bind="manualEntry.Cholestrl_mg" class="form-control" /></div>
+                    </div>
+
+                    <h6 class="text-primary mt-3">Serving Info</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><label class="form-label">Weight 1 (g)</label><input type="number" step="0.1" @bind="manualEntry.GmWt_1" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Description 1</label><input @bind="manualEntry.GmWt_Desc1" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Weight 2 (g)</label><input type="number" step="0.1" @bind="manualEntry.GmWt_2" class="form-control" /></div>
+                        <div class="col-md-3"><label class="form-label">Description 2</label><input @bind="manualEntry.GmWt_Desc2" class="form-control" /></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseManualModal">Cancel</button>
+                    <button class="btn btn-success" @onclick="SaveManualEntry">Save & Link</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ===== Nutrition Detail Modal ===== *@
+@if (showDetailModal && detailIngredient?.Nutrition != null)
+{
+    var n = detailIngredient.Nutrition;
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);" @onclick="CloseDetailModal">
+        <div class="modal-dialog modal-lg" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title">@detailIngredient.Name &mdash; Full Nutrition</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseDetailModal"></button>
+                </div>
+                <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
+                    <p class="text-muted mb-2">@n.Description @(n.IsUSDA ? "(USDA)" : "(Custom)") &mdash; Values per 100g</p>
+
+                    <h6 class="text-primary mt-3">Macros</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><strong>Calories</strong><br />@F(n.Energy_Kcal) kcal</div>
+                        <div class="col-md-3"><strong>Protein</strong><br />@F(n.Protein_g) g</div>
+                        <div class="col-md-3"><strong>Carbs</strong><br />@F(n.Carbohydrt_g) g</div>
+                        <div class="col-md-3"><strong>Fat</strong><br />@F(n.Lipid_Tot_g) g</div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><strong>Fiber</strong><br />@F(n.Fiber_TD_g) g</div>
+                        <div class="col-md-3"><strong>Sugar</strong><br />@F(n.Sugar_Tot_g) g</div>
+                        <div class="col-md-3"><strong>Water</strong><br />@F(n.Water_g) g</div>
+                        <div class="col-md-3"><strong>Ash</strong><br />@F(n.Ash_g) g</div>
+                    </div>
+
+                    <h6 class="text-primary mt-3">Minerals</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><strong>Calcium</strong><br />@F(n.Calcium_mg) mg</div>
+                        <div class="col-md-3"><strong>Iron</strong><br />@F(n.Iron_mg) mg</div>
+                        <div class="col-md-3"><strong>Magnesium</strong><br />@F(n.Magnesium_mg) mg</div>
+                        <div class="col-md-3"><strong>Phosphorus</strong><br />@F(n.Phosphorus_mg) mg</div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><strong>Potassium</strong><br />@F(n.Potassium_mg) mg</div>
+                        <div class="col-md-3"><strong>Sodium</strong><br />@F(n.Sodium_mg) mg</div>
+                        <div class="col-md-3"><strong>Zinc</strong><br />@F(n.Zinc_mg) mg</div>
+                        <div class="col-md-3"><strong>Copper</strong><br />@F(n.Copper_mg) mg</div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><strong>Manganese</strong><br />@F(n.Manganese_mg) mg</div>
+                        <div class="col-md-3"><strong>Selenium</strong><br />@F(n.Selenium_ug) &micro;g</div>
+                    </div>
+
+                    <h6 class="text-primary mt-3">Vitamins</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><strong>Vit C</strong><br />@F(n.Vit_C_mg) mg</div>
+                        <div class="col-md-3"><strong>Thiamin (B1)</strong><br />@F(n.Thiamin_mg) mg</div>
+                        <div class="col-md-3"><strong>Riboflavin (B2)</strong><br />@F(n.Riboflavin_mg) mg</div>
+                        <div class="col-md-3"><strong>Niacin (B3)</strong><br />@F(n.Niacin_mg) mg</div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><strong>Pantothenic Acid</strong><br />@F(n.Panto_Acid_mg) mg</div>
+                        <div class="col-md-3"><strong>Vit B6</strong><br />@F(n.Vit_B6_mg) mg</div>
+                        <div class="col-md-3"><strong>Vit B12</strong><br />@F(n.Vit_B12_ug) &micro;g</div>
+                        <div class="col-md-3"><strong>Folate</strong><br />@F(n.Folate_Tot_ug) &micro;g</div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><strong>Choline</strong><br />@F(n.Choline_Tot_mg) mg</div>
+                        <div class="col-md-3"><strong>Vit A</strong><br />@F(n.Vit_A_IU) IU</div>
+                        <div class="col-md-3"><strong>Vit D</strong><br />@F(n.Vit_D_IU) IU</div>
+                        <div class="col-md-3"><strong>Vit E</strong><br />@F(n.Vit_E_mg) mg</div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><strong>Vit K</strong><br />@F(n.Vit_K_ug) &micro;g</div>
+                        <div class="col-md-3"><strong>Vit A (RAE)</strong><br />@F(n.Vit_A_RAE) &micro;g</div>
+                        <div class="col-md-3"><strong>Retinol</strong><br />@F(n.Retinol_ug) &micro;g</div>
+                        <div class="col-md-3"><strong>Vit D</strong><br />@F(n.Vit_D_ug) &micro;g</div>
+                    </div>
+
+                    <h6 class="text-primary mt-3">Carotenoids</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><strong>Alpha-Carotene</strong><br />@F(n.Alpha_Carot_ug) &micro;g</div>
+                        <div class="col-md-3"><strong>Beta-Carotene</strong><br />@F(n.Beta_Carot_ug) &micro;g</div>
+                        <div class="col-md-3"><strong>Beta-Cryptoxanthin</strong><br />@F(n.Beta_Crypt_ug) &micro;g</div>
+                        <div class="col-md-3"><strong>Lycopene</strong><br />@F(n.Lycopene_ug) &micro;g</div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-3"><strong>Lutein + Zeaxanthin</strong><br />@F(n.Lut_Zea_ug) &micro;g</div>
+                    </div>
+
+                    <h6 class="text-primary mt-3">Fatty Acids</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3"><strong>Saturated</strong><br />@F(n.FA_Sat_g) g</div>
+                        <div class="col-md-3"><strong>Monounsaturated</strong><br />@F(n.FA_Mono_g) g</div>
+                        <div class="col-md-3"><strong>Polyunsaturated</strong><br />@F(n.FA_Poly_g) g</div>
+                        <div class="col-md-3"><strong>Cholesterol</strong><br />@F(n.Cholestrl_mg) mg</div>
+                    </div>
+
+                    @if (n.GmWt_1.HasValue || n.GmWt_2.HasValue)
+                    {
+                        <h6 class="text-primary mt-3">Serving Info</h6>
+                        <div class="row g-2">
+                            @if (n.GmWt_1.HasValue)
+                            {
+                                <div class="col-md-6"><strong>@(n.GmWt_Desc1 ?? "Serving 1")</strong><br />@F(n.GmWt_1) g</div>
+                            }
+                            @if (n.GmWt_2.HasValue)
+                            {
+                                <div class="col-md-6"><strong>@(n.GmWt_Desc2 ?? "Serving 2")</strong><br />@F(n.GmWt_2) g</div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseDetailModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Ingredient>? ingredients;
+    private List<MealPrep.Data.Nutrition>? searchResults;
+
+    // Link modal state
+    private bool showLinkModal;
+    private Ingredient? linkingIngredient;
+    private string usdaSearchTerm = "";
+
+    // Manual entry modal state
+    private bool showManualModal;
+    private MealPrep.Data.Nutrition manualEntry = new();
+
+    // Detail modal state
+    private bool showDetailModal;
+    private Ingredient? detailIngredient;
+
+    // CSV import
+    private bool showCsvImport;
+    private string? importMessage;
+    private bool importSuccess;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadIngredients();
+    }
+
+    private async Task LoadIngredients()
+    {
+        ingredients = await NutritionService.GetIngredientsWithNutritionAsync();
+    }
+
+    // Helper to format nullable decimals
+    private string F(decimal? v) => v?.ToString("G") ?? "—";
+
+    // Nutrition detail modal
+    private void ShowNutritionDetail(Ingredient ing)
+    {
+        detailIngredient = ing;
+        showDetailModal = true;
+    }
+
+    private void CloseDetailModal()
+    {
+        showDetailModal = false;
+        detailIngredient = null;
+    }
+
+    // CSV Import
+    private void ToggleCsvImport() => showCsvImport = !showCsvImport;
+
+    private async Task HandleCsvUpload(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            importMessage = "Importing...";
+            importSuccess = true;
+            StateHasChanged();
+
+            var stream = e.File.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+            var count = await NutritionService.ImportUSDAFromCsvAsync(stream);
+            importMessage = $"Successfully imported {count} USDA nutrition records.";
+            importSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            importMessage = $"Import failed: {ex.Message}";
+            importSuccess = false;
+        }
+    }
+
+    // Link modal
+    private void StartLink(Ingredient ing)
+    {
+        linkingIngredient = ing;
+        usdaSearchTerm = ing.Name;
+        searchResults = null;
+        showLinkModal = true;
+    }
+
+    private void CloseLinkModal()
+    {
+        showLinkModal = false;
+        linkingIngredient = null;
+        searchResults = null;
+    }
+
+    private async Task HandleSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SearchUSDA();
+    }
+
+    private async Task SearchUSDA()
+    {
+        if (string.IsNullOrWhiteSpace(usdaSearchTerm)) return;
+        searchResults = await NutritionService.SearchAsync(usdaSearchTerm);
+    }
+
+    private async Task SelectNutrition(int nutritionId)
+    {
+        if (linkingIngredient == null) return;
+        await NutritionService.LinkToIngredientAsync(linkingIngredient.Id, nutritionId);
+        CloseLinkModal();
+        await LoadIngredients();
+    }
+
+    private async Task Unlink(int ingredientId)
+    {
+        await NutritionService.UnlinkFromIngredientAsync(ingredientId);
+        await LoadIngredients();
+    }
+
+    // Manual entry
+    private void StartManualEntry()
+    {
+        manualEntry = new MealPrep.Data.Nutrition
+        {
+            Description = linkingIngredient?.Name ?? "",
+            IsUSDA = false
+        };
+        showManualModal = true;
+        showLinkModal = false;
+    }
+
+    private void CloseManualModal()
+    {
+        showManualModal = false;
+        showLinkModal = true;
+    }
+
+    private async Task SaveManualEntry()
+    {
+        if (string.IsNullOrWhiteSpace(manualEntry.Description) || linkingIngredient == null) return;
+
+        var created = await NutritionService.CreateAsync(manualEntry);
+        await NutritionService.LinkToIngredientAsync(linkingIngredient.Id, created.Id);
+
+        showManualModal = false;
+        CloseLinkModal();
+        await LoadIngredients();
+    }
+}

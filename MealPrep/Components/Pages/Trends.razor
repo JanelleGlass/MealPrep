@@ -1,0 +1,402 @@
+@page "/trends"
+@using MealPrep.Services
+@inject AnalyticsService Analytics
+@inject IJSRuntime JS
+
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0 text-primary fw-bold">Trends</h2>
+        <div class="d-flex gap-2 align-items-center">
+            <label class="form-label mb-0 me-1">Lookback:</label>
+            <select class="form-select form-select-sm" style="width:auto" @onchange="OnLookbackChanged">
+                <option value="3" selected="@(monthsBack == 3)">3 months</option>
+                <option value="6" selected="@(monthsBack == 6)">6 months</option>
+                <option value="12" selected="@(monthsBack == 12)">12 months</option>
+            </select>
+        </div>
+    </div>
+
+    @if (loading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">Analyzing your meal data...</p>
+        </div>
+    }
+    else
+    {
+        <!-- Summary Cards -->
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-md-3">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body text-center">
+                        <div class="text-muted small">Unique Ingredients</div>
+                        <div class="fs-3 fw-bold text-primary">@ingredientTrends.Count</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body text-center">
+                        <div class="text-muted small">Recipes Used</div>
+                        <div class="fs-3 fw-bold text-primary">@recipeTrends.Count</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body text-center">
+                        <div class="text-muted small">Most Used</div>
+                        <div class="fs-5 fw-bold text-primary">@(ingredientTrends.FirstOrDefault()?.Name ?? "—")</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body text-center">
+                        <div class="text-muted small">Est. Monthly Spend</div>
+                        <div class="fs-3 fw-bold text-primary">@currencySymbol@(totalMonthlyCost.ToString("F2"))</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-8">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-primary text-white fw-semibold">Top Ingredients (Avg/Month)</div>
+                    <div class="card-body" style="height:320px">
+                        <canvas id="chartIngredientBar"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-primary text-white fw-semibold">Meal Type Split</div>
+                    <div class="card-body" style="height:320px">
+                        <canvas id="chartMealType"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Top Ingredients Monthly Line Chart -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-primary text-white fw-semibold">Top Ingredients Over Time</div>
+            <div class="card-body" style="height:320px">
+                <canvas id="chartTopMonthly"></canvas>
+            </div>
+        </div>
+
+        <!-- Ingredient Detail Chart (shown when a row is clicked) -->
+        @if (selectedIngredientId.HasValue)
+        {
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-info text-white fw-semibold d-flex justify-content-between align-items-center">
+                    <span>Monthly Usage: @selectedIngredientName</span>
+                    <button class="btn btn-sm btn-outline-light" @onclick="ClearIngredientDetail">Close</button>
+                </div>
+                <div class="card-body" style="height:280px">
+                    <canvas id="chartIngredientDetail"></canvas>
+                </div>
+            </div>
+        }
+
+        <!-- Ingredient Trends Table -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-primary text-white fw-semibold">Ingredient Trends</div>
+            <div class="card-body p-0">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-primary">
+                        <tr>
+                            <th role="button" @onclick='() => SetIngSort("Name")'>Name @IngSortIndicator("Name")</th>
+                            <th role="button" @onclick='() => SetIngSort("Qty")' class="text-end">Total Qty @IngSortIndicator("Qty")</th>
+                            <th role="button" @onclick='() => SetIngSort("Meals")' class="text-end">Meals @IngSortIndicator("Meals")</th>
+                            <th role="button" @onclick='() => SetIngSort("Avg")' class="text-end">Avg/Month @IngSortIndicator("Avg")</th>
+                            <th role="button" @onclick='() => SetIngSort("Cost")' class="text-end">Est. Cost/Mo @IngSortIndicator("Cost")</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in GetSortedIngredients())
+                        {
+                            <tr role="button" @onclick="() => ShowIngredientDetail(t.IngredientId, t.Name)" class="@(selectedIngredientId == t.IngredientId ? "table-active" : "")">
+                                <td>@t.Name <span class="text-muted small">(@t.Unit)</span></td>
+                                <td class="text-end">@t.TotalQuantity</td>
+                                <td class="text-end">@t.MealCount</td>
+                                <td class="text-end">@t.AvgPerMonth</td>
+                                <td class="text-end">@(t.EstMonthlyCost.HasValue ? $"{currencySymbol}{t.EstMonthlyCost:F2}" : "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (ingredientTrends.Count == 0)
+                {
+                    <div class="text-center text-muted py-3">No ingredient data for this period.</div>
+                }
+            </div>
+        </div>
+
+        <!-- Recipe Trends Table -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-primary text-white fw-semibold">Recipe Trends</div>
+            <div class="card-body p-0">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-primary">
+                        <tr>
+                            <th role="button" @onclick='() => SetRecSort("Name")'>Name @RecSortIndicator("Name")</th>
+                            <th role="button" @onclick='() => SetRecSort("Count")' class="text-end">Times Used @RecSortIndicator("Count")</th>
+                            <th role="button" @onclick='() => SetRecSort("Last")'>Last Used @RecSortIndicator("Last")</th>
+                            <th role="button" @onclick='() => SetRecSort("Avg")' class="text-end">Avg/Month @RecSortIndicator("Avg")</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in GetSortedRecipes())
+                        {
+                            <tr>
+                                <td>@r.Name</td>
+                                <td class="text-end">@r.UsageCount</td>
+                                <td>@(r.LastUsed?.ToString("MMM d, yyyy") ?? "—")</td>
+                                <td class="text-end">@r.AvgPerMonth</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (recipeTrends.Count == 0)
+                {
+                    <div class="text-center text-muted py-3">No recipe data for this period.</div>
+                }
+            </div>
+        </div>
+
+        <!-- Shopping Predictions -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-primary text-white fw-semibold">Predicted Shopping List (Next Month)</div>
+            <div class="card-body p-0">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-primary">
+                        <tr>
+                            <th>Ingredient</th>
+                            <th class="text-end">Predicted Need</th>
+                            <th class="text-end">In Pantry</th>
+                            <th class="text-end">To Buy</th>
+                            <th class="text-end">Est. Cost</th>
+                            <th class="text-center">Confidence</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in predictions)
+                        {
+                            <tr>
+                                <td>@p.Name <span class="text-muted small">(@p.Unit)</span></td>
+                                <td class="text-end">@p.PredictedNeed</td>
+                                <td class="text-end">@p.PantryQuantity</td>
+                                <td class="text-end fw-bold">@p.ToBuy</td>
+                                <td class="text-end">@(p.EstCost.HasValue ? $"{currencySymbol}{p.EstCost:F2}" : "—")</td>
+                                <td class="text-center">
+                                    <span class="badge @GetConfidenceBadge(p.Confidence)">@((p.Confidence * 100).ToString("F0"))%</span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    @if (predictions.Any())
+                    {
+                        <tfoot>
+                            <tr class="table-primary fw-bold">
+                                <td colspan="4" class="text-end">Total Estimated Cost:</td>
+                                <td class="text-end">@currencySymbol@(predictions.Where(p => p.EstCost.HasValue).Sum(p => p.EstCost!.Value).ToString("F2"))</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    }
+                </table>
+                @if (predictions.Count == 0)
+                {
+                    <div class="text-center text-muted py-3">Not enough data to generate predictions.</div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private int monthsBack = 6;
+    private bool loading = true;
+    private string currencySymbol = "$";
+
+    private List<IngredientTrend> ingredientTrends = new();
+    private List<RecipeTrend> recipeTrends = new();
+    private List<ShoppingPrediction> predictions = new();
+    private Dictionary<string, int> mealTypeDist = new();
+    private (List<string> Labels, List<(string Name, List<decimal> Values)> Series) topMonthly;
+
+    private decimal totalMonthlyCost;
+
+    // Ingredient detail
+    private int? selectedIngredientId;
+    private string selectedIngredientName = "";
+
+    // Sorting
+    private string ingSortCol = "Meals";
+    private bool ingSortAsc = false;
+    private string recSortCol = "Count";
+    private bool recSortAsc = false;
+
+    private bool chartsRendered = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currencySymbol = await JS.InvokeAsync<string>("currencySymbol.get");
+        await LoadData();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!loading && !chartsRendered)
+        {
+            chartsRendered = true;
+            await RenderCharts();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        loading = true;
+        chartsRendered = false;
+        StateHasChanged();
+
+        ingredientTrends = await Analytics.GetIngredientTrendsAsync(monthsBack);
+        recipeTrends = await Analytics.GetRecipeTrendsAsync(monthsBack);
+        predictions = await Analytics.GetShoppingPredictionsAsync(1, monthsBack);
+        mealTypeDist = await Analytics.GetMealTypeDistributionAsync(monthsBack);
+        topMonthly = await Analytics.GetTopIngredientsMonthlyAsync(5, monthsBack);
+
+        totalMonthlyCost = ingredientTrends
+            .Where(t => t.EstMonthlyCost.HasValue)
+            .Sum(t => t.EstMonthlyCost!.Value);
+
+        loading = false;
+        StateHasChanged();
+    }
+
+    private async Task RenderCharts()
+    {
+        // Top ingredients bar chart
+        var top10 = ingredientTrends.Take(10).ToList();
+        if (top10.Any())
+        {
+            await JS.InvokeVoidAsync("trendCharts.createBar", "chartIngredientBar",
+                top10.Select(t => t.Name).ToArray(),
+                new object[] { new { label = "Avg Qty/Month", data = top10.Select(t => (double)t.AvgPerMonth).ToArray(), backgroundColor = "rgba(13,110,253,0.6)" } },
+                (string?)null);
+        }
+
+        // Meal type doughnut
+        if (mealTypeDist.Any())
+        {
+            await JS.InvokeVoidAsync("trendCharts.createDoughnut", "chartMealType",
+                mealTypeDist.Keys.ToArray(),
+                mealTypeDist.Values.ToArray(),
+                new[] { "rgba(255,193,7,0.8)", "rgba(25,135,84,0.8)", "rgba(13,110,253,0.8)" },
+                (string?)null);
+        }
+
+        // Top ingredients monthly line chart
+        if (topMonthly.Series.Any())
+        {
+            var colors = new[] { "#0d6efd", "#198754", "#ffc107", "#dc3545", "#6f42c1" };
+            var datasets = topMonthly.Series.Select((s, i) => new
+            {
+                label = s.Name,
+                data = s.Values.Select(v => (double)v).ToArray(),
+                borderColor = colors[i % colors.Length],
+                backgroundColor = colors[i % colors.Length] + "33",
+                fill = false,
+                tension = 0.3
+            }).ToArray();
+
+            await JS.InvokeVoidAsync("trendCharts.createLine", "chartTopMonthly",
+                topMonthly.Labels.ToArray(), datasets, (string?)null);
+        }
+    }
+
+    private async Task OnLookbackChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int val))
+        {
+            monthsBack = val;
+            selectedIngredientId = null;
+            await LoadData();
+        }
+    }
+
+    private async Task ShowIngredientDetail(int id, string name)
+    {
+        selectedIngredientId = id;
+        selectedIngredientName = name;
+        StateHasChanged();
+
+        // Small delay to ensure canvas is rendered
+        await Task.Delay(50);
+
+        var history = await Analytics.GetIngredientMonthlyHistoryAsync(id, monthsBack);
+        await JS.InvokeVoidAsync("trendCharts.createLine", "chartIngredientDetail",
+            history.Select(h => h.Label).ToArray(),
+            new object[] { new { label = name, data = history.Select(h => (double)h.Quantity).ToArray(), borderColor = "#0d6efd", backgroundColor = "rgba(13,110,253,0.1)", fill = true, tension = 0.3 } },
+            (string?)null);
+    }
+
+    private async Task ClearIngredientDetail()
+    {
+        await JS.InvokeVoidAsync("trendCharts.destroy", "chartIngredientDetail");
+        selectedIngredientId = null;
+    }
+
+    // Sorting helpers
+    private void SetIngSort(string col)
+    {
+        if (ingSortCol == col) ingSortAsc = !ingSortAsc;
+        else { ingSortCol = col; ingSortAsc = col == "Name"; }
+    }
+
+    private void SetRecSort(string col)
+    {
+        if (recSortCol == col) recSortAsc = !recSortAsc;
+        else { recSortCol = col; recSortAsc = col == "Name"; }
+    }
+
+    private string IngSortIndicator(string col) => ingSortCol == col ? (ingSortAsc ? "▲" : "▼") : "";
+    private string RecSortIndicator(string col) => recSortCol == col ? (recSortAsc ? "▲" : "▼") : "";
+
+    private IEnumerable<IngredientTrend> GetSortedIngredients()
+    {
+        return ingSortCol switch
+        {
+            "Name" => ingSortAsc ? ingredientTrends.OrderBy(t => t.Name) : ingredientTrends.OrderByDescending(t => t.Name),
+            "Qty" => ingSortAsc ? ingredientTrends.OrderBy(t => t.TotalQuantity) : ingredientTrends.OrderByDescending(t => t.TotalQuantity),
+            "Meals" => ingSortAsc ? ingredientTrends.OrderBy(t => t.MealCount) : ingredientTrends.OrderByDescending(t => t.MealCount),
+            "Avg" => ingSortAsc ? ingredientTrends.OrderBy(t => t.AvgPerMonth) : ingredientTrends.OrderByDescending(t => t.AvgPerMonth),
+            "Cost" => ingSortAsc ? ingredientTrends.OrderBy(t => t.EstMonthlyCost ?? 0) : ingredientTrends.OrderByDescending(t => t.EstMonthlyCost ?? 0),
+            _ => ingredientTrends
+        };
+    }
+
+    private IEnumerable<RecipeTrend> GetSortedRecipes()
+    {
+        return recSortCol switch
+        {
+            "Name" => recSortAsc ? recipeTrends.OrderBy(r => r.Name) : recipeTrends.OrderByDescending(r => r.Name),
+            "Count" => recSortAsc ? recipeTrends.OrderBy(r => r.UsageCount) : recipeTrends.OrderByDescending(r => r.UsageCount),
+            "Last" => recSortAsc ? recipeTrends.OrderBy(r => r.LastUsed) : recipeTrends.OrderByDescending(r => r.LastUsed),
+            "Avg" => recSortAsc ? recipeTrends.OrderBy(r => r.AvgPerMonth) : recipeTrends.OrderByDescending(r => r.AvgPerMonth),
+            _ => recipeTrends
+        };
+    }
+
+    private static string GetConfidenceBadge(decimal confidence)
+    {
+        if (confidence >= 0.7m) return "bg-success";
+        if (confidence >= 0.4m) return "bg-warning text-dark";
+        return "bg-danger";
+    }
+}

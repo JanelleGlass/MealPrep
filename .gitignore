@@ -1,0 +1,15 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+*.user
+
+# WebView2 runtime cache
+*.WebView2/
+
+# Local database
+mealprep.db
+mealprep.db-shm
+mealprep.db-wal

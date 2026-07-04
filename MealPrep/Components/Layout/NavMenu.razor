@@ -1,0 +1,86 @@
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">MealPrep</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column">
+
+        <div class="nav-group">
+            <div class="nav-group-header px-3" @onclick="() => mealPlanExpanded = !mealPlanExpanded" @onclick:stopPropagation="true">
+                <span class="chevron">@(mealPlanExpanded ? "▾" : "▸")</span> Meal Plan
+            </div>
+            @if (mealPlanExpanded)
+            {
+                <div class="nav-group-items">
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                            <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Calendar
+                        </NavLink>
+                    </div>
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="recipes">
+                            <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Recipes
+                        </NavLink>
+                    </div>
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="pantry">
+                            <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Pantry
+                        </NavLink>
+                    </div>
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="ingredients">
+                            <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Ingredients
+                        </NavLink>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="nav-group">
+            <div class="nav-group-header px-3" @onclick="() => dataExpanded = !dataExpanded" @onclick:stopPropagation="true">
+                <span class="chevron">@(dataExpanded ? "▾" : "▸")</span> Data
+            </div>
+            @if (dataExpanded)
+            {
+                <div class="nav-group-items">
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="nutrition">
+                            <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Nutrition
+                        </NavLink>
+                    </div>
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="trends">
+                            <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Trends
+                        </NavLink>
+                    </div>
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="shop">
+                            <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Shop
+                        </NavLink>
+                    </div>
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="data">
+                            <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Sync
+                        </NavLink>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="settings">
+                <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> Settings
+            </NavLink>
+        </div>
+
+    </nav>
+</div>
+
+@code {
+    private bool mealPlanExpanded = true;
+    private bool dataExpanded = true;
+}

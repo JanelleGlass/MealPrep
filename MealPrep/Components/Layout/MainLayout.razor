@@ -1,0 +1,51 @@
+﻿@inherits LayoutComponentBase
+@inject MealPrep.Services.UserPreferenceService PrefService
+@inject IJSRuntime JS
+
+<div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
+    <main>
+        <article class="content px-4">
+            <ErrorBoundary @ref="errorBoundary">
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent Context="ex">
+                    <div class="alert alert-danger">
+                        <h4>Error</h4>
+                        <pre style="white-space: pre-wrap;">@ex.Message</pre>
+                        <pre style="white-space: pre-wrap; font-size: 0.75rem;">@ex.StackTrace</pre>
+                        <button class="btn btn-warning mt-2" @onclick="() => errorBoundary?.Recover()">Recover</button>
+                    </div>
+                </ErrorContent>
+            </ErrorBoundary>
+        </article>
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private ErrorBoundary? errorBoundary;
+
+    protected override void OnParametersSet()
+    {
+        errorBoundary?.Recover();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var isDark = await PrefService.GetBoolAsync("DarkMode");
+            await JS.InvokeVoidAsync("darkMode.set", isDark);
+        }
+    }
+}

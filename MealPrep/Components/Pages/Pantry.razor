@@ -1,0 +1,228 @@
+@page "/pantry"
+@using MealPrep.Data
+@using MealPrep.Services
+@inject PantryService PantryService
+@inject IngredientService IngredientService
+@inject IJSRuntime JS
+<PageTitle>Pantry</PageTitle>
+
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0 text-primary fw-bold">🏠 Pantry — Current Ingredients</h2>
+        <button class="btn btn-primary" @onclick="StartAdd">+ Add to Pantry</button>
+    </div>
+
+    <div class="mb-3">
+        <input type="text" class="form-control" placeholder="🔍 Search pantry..." @bind="searchTerm" @bind:event="oninput" />
+    </div>
+
+    <!-- Pantry List -->
+    @if (items == null)
+    {
+        <p class="text-muted">Loading...</p>
+    }
+    else if (!items.Any())
+    {
+        <div class="alert alert-info">Your pantry is empty. Add ingredients you have on hand above.</div>
+    }
+    else
+    {
+        var filteredItems = GetFilteredSorted().ToList();
+        decimal pantryTotal = 0;
+        bool pantryHasPrice = false;
+        foreach (var pi in filteredItems)
+        {
+            if (pi.Ingredient?.PricePerUnit != null)
+            {
+                pantryTotal += pi.Quantity * pi.Ingredient.PricePerUnit.Value;
+                pantryHasPrice = true;
+            }
+        }
+        if (pantryHasPrice)
+        {
+            <div class="text-end fw-bold mb-2">Total Pantry Value: @currencySymbol@pantryTotal.ToString("F2")</div>
+        }
+        <div class="card shadow-sm">
+            <div class="card-body p-0">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-primary">
+                        <tr>
+                            <th role="button" @onclick='() => SetSort("Name")'>Ingredient @SortIndicator("Name")</th>
+                            <th role="button" class="text-end" @onclick='() => SetSort("Quantity")'>Quantity @SortIndicator("Quantity")</th>
+                            <th role="button" @onclick='() => SetSort("Unit")'>Unit @SortIndicator("Unit")</th>
+                            <th role="button" class="text-end" @onclick='() => SetSort("Value")'>Value @SortIndicator("Value")</th>
+                            <th style="width:120px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in filteredItems)
+                        {
+                            <tr>
+                                <td>@item.Ingredient?.Name</td>
+                                <td class="text-end">@item.Quantity</td>
+                                <td>@item.Ingredient?.Unit</td>
+                                <td class="text-end">@(item.Ingredient?.PricePerUnit != null ? $"{currencySymbol}{(item.Quantity * item.Ingredient.PricePerUnit.Value):F2}" : "—")</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary" @onclick="() => StartEdit(item)">✏️</button>
+                                        <button class="btn btn-outline-danger" @onclick="() => Delete(item.Id)">🗑️</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@* ===== Pantry Add/Edit Modal ===== *@
+@if (showForm)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">@(editingItem.Id == 0 ? "Add to Pantry" : "Edit Pantry Item")</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="Cancel"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!allIngredients.Any())
+                    {
+                        <div class="alert alert-warning small py-2 mb-0">No ingredients defined yet. <a href="/ingredients">Add ingredients first.</a></div>
+                    }
+                    else
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Ingredient</label>
+                            <select @bind="editingItem.IngredientId" class="form-select">
+                                <option value="0">-- Select ingredient --</option>
+                                @foreach (var ing in allIngredients)
+                                {
+                                    <option value="@ing.Id">@ing.Name (@ing.Unit)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Quantity on Hand</label>
+                            <input @bind="editingItem.Quantity" type="number" step="0.01" min="0" class="form-control" placeholder="Qty" />
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="Cancel">Cancel</button>
+                    <button class="btn btn-success" @onclick="Save">
+                        @(editingItem.Id == 0 ? "➕ Add" : "💾 Save")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<PantryItem>? items;
+    private List<Ingredient> allIngredients = new();
+    private PantryItem editingItem = new();
+    private string currencySymbol = "$";
+    private bool showForm;
+    private string searchTerm = "";
+    private string sortColumn = "Name";
+    private bool sortAscending = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        allIngredients = await IngredientService.GetAllAsync();
+        await LoadItems();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            currencySymbol = await JS.InvokeAsync<string>("currencySymbol.get");
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadItems()
+    {
+        items = await PantryService.GetAllAsync();
+    }
+
+    private void StartAdd()
+    {
+        editingItem = new PantryItem();
+        showForm = true;
+    }
+
+    private void StartEdit(PantryItem item)
+    {
+        editingItem = new PantryItem
+        {
+            Id = item.Id,
+            IngredientId = item.IngredientId,
+            Quantity = item.Quantity
+        };
+        showForm = true;
+    }
+
+    private void Cancel()
+    {
+        editingItem = new();
+        showForm = false;
+    }
+
+    private async Task Save()
+    {
+        if (editingItem.IngredientId == 0) return;
+
+        if (editingItem.Id == 0)
+            await PantryService.CreateAsync(editingItem);
+        else
+            await PantryService.UpdateAsync(editingItem);
+
+        editingItem = new PantryItem();
+        showForm = false;
+        await LoadItems();
+    }
+
+    private async Task Delete(int id)
+    {
+        await PantryService.DeleteAsync(id);
+        await LoadItems();
+    }
+
+    private IEnumerable<PantryItem> GetFilteredSorted()
+    {
+        var result = items!.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+            result = result.Where(i => (i.Ingredient?.Name ?? "").Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+        result = sortColumn switch
+        {
+            "Quantity" => sortAscending ? result.OrderBy(i => i.Quantity) : result.OrderByDescending(i => i.Quantity),
+            "Unit" => sortAscending ? result.OrderBy(i => i.Ingredient?.Unit) : result.OrderByDescending(i => i.Ingredient?.Unit),
+            "Value" => sortAscending
+                ? result.OrderBy(i => i.Ingredient?.PricePerUnit != null ? i.Quantity * i.Ingredient.PricePerUnit.Value : 0)
+                : result.OrderByDescending(i => i.Ingredient?.PricePerUnit != null ? i.Quantity * i.Ingredient.PricePerUnit.Value : 0),
+            _ => sortAscending ? result.OrderBy(i => i.Ingredient?.Name) : result.OrderByDescending(i => i.Ingredient?.Name),
+        };
+        return result;
+    }
+
+    private void SetSort(string column)
+    {
+        if (sortColumn == column)
+            sortAscending = !sortAscending;
+        else
+        {
+            sortColumn = column;
+            sortAscending = true;
+        }
+    }
+
+    private string SortIndicator(string column)
+        => sortColumn == column ? (sortAscending ? " ▲" : " ▼") : "";
+}

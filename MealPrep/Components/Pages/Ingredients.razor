@@ -1,0 +1,203 @@
+@page "/ingredients"
+@using MealPrep.Data
+@using MealPrep.Services
+@inject IngredientService IngredientService
+@inject IJSRuntime JS
+<PageTitle>Ingredients</PageTitle>
+
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0 text-primary fw-bold">🥕 Ingredients</h2>
+        <button class="btn btn-primary" @onclick="StartAdd">+ Add Ingredient</button>
+    </div>
+
+    <div class="mb-3">
+        <input type="text" class="form-control" placeholder="🔍 Search ingredients..." @bind="searchTerm" @bind:event="oninput" />
+    </div>
+
+    <!-- Ingredients List -->
+    @if (items == null)
+    {
+        <p class="text-muted">Loading...</p>
+    }
+    else if (!items.Any())
+    {
+        <div class="alert alert-info">No ingredients yet. Add your first ingredient above — these will appear in recipes, meals, and pantry.</div>
+    }
+    else
+    {
+        <div class="card shadow-sm">
+            <div class="card-body p-0">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-primary">
+                        <tr>
+                            <th role="button" @onclick='() => SetSort("Name")'>Ingredient @SortIndicator("Name")</th>
+                            <th role="button" @onclick='() => SetSort("Unit")'>Unit @SortIndicator("Unit")</th>
+                            <th role="button" class="text-end" @onclick='() => SetSort("Price")'>Price/Unit @SortIndicator("Price")</th>
+                            <th style="width:120px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in GetFilteredSorted())
+                        {
+                            <tr>
+                                <td>@item.Name</td>
+                                <td>@item.Unit</td>
+                                <td class="text-end">@(item.PricePerUnit.HasValue ? $"{currencySymbol}{item.PricePerUnit:F2}" : "—")</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary" @onclick="() => StartEdit(item)">✏️</button>
+                                        <button class="btn btn-outline-danger" @onclick="() => Delete(item.Id)">🗑️</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@* ===== Ingredient Add/Edit Modal ===== *@
+@if (showForm)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">@(editingItem.Id == 0 ? "Add Ingredient" : "Edit Ingredient")</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="Cancel"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Ingredient Name</label>
+                        <input @bind="editingItem.Name" class="form-control" placeholder="e.g., Chicken breast" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Unit of Measure</label>
+                        <select @bind="editingItem.Unit" class="form-select">
+                            <option value="">-- Unit --</option>
+                            @foreach (var u in CookingUnits.All)
+                            {
+                                <option value="@u">@u</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Price / Unit</label>
+                        <input @bind="editingItem.PricePerUnit" type="number" step="0.01" min="0" class="form-control" placeholder="0.00" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="Cancel">Cancel</button>
+                    <button class="btn btn-success" @onclick="Save">
+                        @(editingItem.Id == 0 ? "➕ Add" : "💾 Save")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Ingredient>? items;
+    private Ingredient editingItem = new();
+    private string currencySymbol = "$";
+    private bool showForm;
+    private string searchTerm = "";
+    private string sortColumn = "Name";
+    private bool sortAscending = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadItems();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            currencySymbol = await JS.InvokeAsync<string>("currencySymbol.get");
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadItems()
+    {
+        items = await IngredientService.GetAllAsync();
+    }
+
+    private void StartAdd()
+    {
+        editingItem = new Ingredient();
+        showForm = true;
+    }
+
+    private void StartEdit(Ingredient item)
+    {
+        editingItem = new Ingredient
+        {
+            Id = item.Id,
+            Name = item.Name,
+            Unit = item.Unit,
+            PricePerUnit = item.PricePerUnit
+        };
+        showForm = true;
+    }
+
+    private void Cancel()
+    {
+        editingItem = new();
+        showForm = false;
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(editingItem.Name)) return;
+
+        if (editingItem.Id == 0)
+            await IngredientService.CreateAsync(editingItem);
+        else
+            await IngredientService.UpdateAsync(editingItem);
+
+        editingItem = new Ingredient();
+        showForm = false;
+        await LoadItems();
+    }
+
+    private async Task Delete(int id)
+    {
+        await IngredientService.DeleteAsync(id);
+        await LoadItems();
+    }
+
+    private IEnumerable<Ingredient> GetFilteredSorted()
+    {
+        var result = items!.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+            result = result.Where(i => (i.Name ?? "").Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+        result = sortColumn switch
+        {
+            "Unit" => sortAscending ? result.OrderBy(i => i.Unit) : result.OrderByDescending(i => i.Unit),
+            "Price" => sortAscending ? result.OrderBy(i => i.PricePerUnit ?? 0) : result.OrderByDescending(i => i.PricePerUnit ?? 0),
+            _ => sortAscending ? result.OrderBy(i => i.Name) : result.OrderByDescending(i => i.Name),
+        };
+        return result;
+    }
+
+    private void SetSort(string column)
+    {
+        if (sortColumn == column)
+            sortAscending = !sortAscending;
+        else
+        {
+            sortColumn = column;
+            sortAscending = true;
+        }
+    }
+
+    private string SortIndicator(string column)
+        => sortColumn == column ? (sortAscending ? " ▲" : " ▼") : "";
+}

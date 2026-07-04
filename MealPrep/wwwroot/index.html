@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MealPrep</title>
+    <base href="/" />
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+</head>
+
+<body>
+    <div id="app">Loading...</div>
+
+    <div id="blazor-error-ui" data-nosnippet>
+        An unhandled error has occurred.
+        <a href="" class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+
+    <script src="_framework/blazor.webview.js"></script>
+    <script src="lib/chartjs/chart.umd.min.js"></script>
+    <script>
+        window.trendCharts = {
+            _instances: {},
+            createBar: (canvasId, labels, datasets, title) => {
+                window.trendCharts.destroy(canvasId);
+                const ctx = document.getElementById(canvasId);
+                if (!ctx) return;
+                window.trendCharts._instances[canvasId] = new Chart(ctx, {
+                    type: 'bar',
+                    data: { labels: labels, datasets: datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: datasets.length > 1 }, title: { display: !!title, text: title } },
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+            },
+            createLine: (canvasId, labels, datasets, title) => {
+                window.trendCharts.destroy(canvasId);
+                const ctx = document.getElementById(canvasId);
+                if (!ctx) return;
+                window.trendCharts._instances[canvasId] = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: labels, datasets: datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: datasets.length > 1 }, title: { display: !!title, text: title } },
+                        scales: { y: { beginAtZero: true } },
+                        interaction: { intersect: false, mode: 'index' }
+                    }
+                });
+            },
+            createDoughnut: (canvasId, labels, data, colors, title) => {
+                window.trendCharts.destroy(canvasId);
+                const ctx = document.getElementById(canvasId);
+                if (!ctx) return;
+                window.trendCharts._instances[canvasId] = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: { labels: labels, datasets: [{ data: data, backgroundColor: colors }] },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { title: { display: !!title, text: title } }
+                    }
+                });
+            },
+            destroy: (canvasId) => {
+                if (window.trendCharts._instances[canvasId]) {
+                    window.trendCharts._instances[canvasId].destroy();
+                    delete window.trendCharts._instances[canvasId];
+                }
+            }
+        };
+    </script>
+    <script>
+        window.darkMode = {
+            set: (enabled) => {
+                document.documentElement.setAttribute('data-bs-theme', enabled ? 'dark' : 'light');
+            }
+        };
+    </script>
+    <script>
+        window.currencySymbol = {
+            get: () => localStorage.getItem('currencySymbol') || '$',
+            set: (symbol) => localStorage.setItem('currencySymbol', symbol)
+        };
+    </script>
+    <script>
+        window.gitBackup = {
+            get: () => ({
+                repo: localStorage.getItem('gitBackupRepo') || '',
+                token: localStorage.getItem('gitBackupToken') || '',
+                path: localStorage.getItem('gitBackupPath') || 'mealprep-backup.json'
+            }),
+            set: (repo, token, path) => {
+                localStorage.setItem('gitBackupRepo', repo);
+                localStorage.setItem('gitBackupToken', token);
+                localStorage.setItem('gitBackupPath', path);
+            }
+        };
+    </script>
+</body>
+
+</html>
