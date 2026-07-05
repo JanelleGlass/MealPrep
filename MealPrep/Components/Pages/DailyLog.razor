@@ -4,6 +4,10 @@
 @inject FoodLogService FoodLog
 @inject BodyMeasurementService BodyService
 @inject UserPreferenceService PrefService
+@inject MealService MealSvc
+@inject RecipeService RecipeSvc
+@inject IngredientService IngredientSvc
+@inject NutritionCalcService NutriCalc
 
 <PageTitle>Daily Log</PageTitle>
 
@@ -79,6 +83,58 @@
         </div>
     </div>
 
+    <!-- Planned meals for this day -->
+    @if (_plannedMeals.Count > 0)
+    {
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-primary text-white">Planned for this day</div>
+            <div class="card-body p-2">
+                @foreach (var meal in _plannedMeals)
+                {
+                    var comp = _mealComputations.GetValueOrDefault(meal.Id);
+                    var logged = _entries.Any(e => e.MealId == meal.Id);
+                    <div class="d-flex align-items-center gap-2 border rounded p-2 mb-1 @(logged ? "opacity-75" : "")">
+                        <div class="flex-grow-1" style="min-width:0;">
+                            <div style="font-size:14px;font-weight:500;">
+                                <span class="badge @MealTypeBadge(meal.MealType) me-1">@meal.MealType</span>
+                                <span class="text-truncate">@meal.Title</span>
+                            </div>
+                            @if (comp != null)
+                            {
+                                <div class="text-muted font-monospace" style="font-size:11px;">
+                                    @(comp.HasApprox ? "≈ " : "")@Math.Round(comp.Calories) cal · @($"{comp.ProteinG:F1}")g P · @($"{comp.FiberG:F1}")g fiber · @($"{comp.IronMg:F1}")mg Fe
+                                </div>
+                                @if (comp.HasUncounted)
+                                {
+                                    <div class="text-warning" style="font-size:11px;">⚠ @comp.UncountedNote</div>
+                                }
+                                @if (comp.Items.Count == 0 || (comp.Calories == 0 && !comp.Items.Any(i => i.Status is NutrientItemStatus.Counted or NutrientItemStatus.CountedApprox)))
+                                {
+                                    <div class="text-warning" style="font-size:11px;">No nutrition data — logs 0 cal</div>
+                                }
+                            }
+                        </div>
+                        @if (logged)
+                        {
+                            <button class="btn btn-sm btn-outline-secondary" disabled>✓ Logged</button>
+                        }
+                        else
+                        {
+                            <div class="form-check mb-0" title="Counts toward 30 plants this week">
+                                <input class="form-check-input" type="checkbox"
+                                       checked="@_plantToggles.GetValueOrDefault(meal.Id)"
+                                       @onchange="e => _plantToggles[meal.Id] = (bool)e.Value!" />
+                                <label class="form-check-label" style="font-size:12px;">🌱</label>
+                            </div>
+                            <button class="btn btn-sm btn-dark" disabled="@(_loggingMealId == meal.Id)"
+                                    @onclick="() => LogPlannedMeal(meal)">Log</button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
     <!-- Log an item -->
     <div class="card shadow-sm mb-3">
         <div class="card-header bg-primary text-white">Log an item</div>
@@ -123,6 +179,101 @@
                 </div>
             }
         </div>
+    </div>
+
+    <!-- Log from recipe or ingredient -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center"
+             style="cursor:pointer;" @onclick="() => _logFromOpen = !_logFromOpen">
+            <span>Log from recipe or ingredient</span>
+            <span>@(_logFromOpen ? "▾" : "▸")</span>
+        </div>
+        @if (_logFromOpen)
+        {
+            <div class="card-body">
+                <ul class="nav nav-pills nav-fill mb-3">
+                    <li class="nav-item">
+                        <button class="nav-link @(_logFromTab == "recipe" ? "active" : "")" @onclick="@(() => _logFromTab = "recipe")">Recipe</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link @(_logFromTab == "ingredient" ? "active" : "")" @onclick="@(() => _logFromTab = "ingredient")">Ingredient</button>
+                    </li>
+                </ul>
+
+                @if (_logFromTab == "recipe")
+                {
+                    <div class="row g-2 align-items-end mb-2">
+                        <div class="col-8">
+                            <label class="form-label mb-0" style="font-size:10px;">RECIPE</label>
+                            <select class="form-select form-select-sm" value="@_selRecipeId" @onchange="OnRecipeChanged">
+                                <option value="0">-- Choose recipe --</option>
+                                @foreach (var r in _recipes)
+                                {
+                                    <option value="@r.Id">@r.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label mb-0" style="font-size:10px;">SERVINGS EATEN</label>
+                            <input type="number" class="form-control form-control-sm" min="0" step="0.5"
+                                   value="@_selServings" @onchange="OnServingsChanged" />
+                        </div>
+                    </div>
+                    @if (_recipePreview != null && _selRecipeId > 0)
+                    {
+                        <div class="text-muted font-monospace mb-1" style="font-size:12px;">
+                            @(_recipePreview.HasApprox ? "≈ " : "")@Math.Round(_recipePreview.Calories) cal · @($"{_recipePreview.ProteinG:F1}")g P · @($"{_recipePreview.FiberG:F1}")g fiber · @($"{_recipePreview.IronMg:F1}")mg Fe
+                        </div>
+                        @if (_recipePreview.HasUncounted)
+                        {
+                            <div class="text-warning mb-1" style="font-size:11px;">⚠ @_recipePreview.UncountedNote</div>
+                        }
+                    }
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="recipePlantCheck" @bind="_selRecipePlant" />
+                        <label class="form-check-label" for="recipePlantCheck" style="font-size:13px;">Counts toward 30 plants this week</label>
+                    </div>
+                    <button class="btn btn-dark w-100" @onclick="LogRecipe"
+                            disabled="@(_selRecipeId == 0 || _selServings <= 0)">+ Add to log</button>
+                }
+                else
+                {
+                    <div class="row g-2 align-items-end mb-2">
+                        <div class="col-8">
+                            <label class="form-label mb-0" style="font-size:10px;">INGREDIENT</label>
+                            <select class="form-select form-select-sm" value="@_selIngredientId" @onchange="OnIngredientChanged">
+                                <option value="0">-- Choose ingredient --</option>
+                                @foreach (var ing in _ingredients)
+                                {
+                                    <option value="@ing.Id">@ing.Name (@ing.Unit)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label mb-0" style="font-size:10px;">QTY @(_selIngredientUnit.ToUpperInvariant())</label>
+                            <input type="number" class="form-control form-control-sm" min="0" step="0.25"
+                                   value="@_selQty" @onchange="OnQtyChanged" />
+                        </div>
+                    </div>
+                    @if (_ingredientPreview != null && _selIngredientId > 0)
+                    {
+                        <div class="text-muted font-monospace mb-1" style="font-size:12px;">
+                            @(_ingredientPreview.HasApprox ? "≈ " : "")@Math.Round(_ingredientPreview.Calories) cal · @($"{_ingredientPreview.ProteinG:F1}")g P · @($"{_ingredientPreview.FiberG:F1}")g fiber · @($"{_ingredientPreview.IronMg:F1}")mg Fe
+                        </div>
+                        @if (_ingredientPreview.HasUncounted)
+                        {
+                            <div class="text-warning mb-1" style="font-size:11px;">⚠ @_ingredientPreview.UncountedNote</div>
+                        }
+                    }
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="ingPlantCheck" @bind="_selIngredientPlant" />
+                        <label class="form-check-label" for="ingPlantCheck" style="font-size:13px;">Counts toward 30 plants this week</label>
+                    </div>
+                    <button class="btn btn-dark w-100" @onclick="LogIngredient"
+                            disabled="@(_selIngredientId == 0 || _selQty <= 0)">+ Add to log</button>
+                }
+            </div>
+        }
     </div>
 
     <!-- Entries -->
@@ -250,6 +401,27 @@
     private int _weeklyPlants;
     private decimal _fallbackHeight;
 
+    // Planned meals
+    private List<Meal> _plannedMeals = new();
+    private Dictionary<int, NutrientComputation> _mealComputations = new();
+    private Dictionary<int, bool> _plantToggles = new();
+    private int? _loggingMealId;
+
+    // Log from recipe/ingredient
+    private bool _logFromOpen;
+    private string _logFromTab = "recipe";
+    private List<Recipe> _recipes = new();
+    private List<Ingredient> _ingredients = new();
+    private int _selRecipeId;
+    private decimal _selServings = 1;
+    private bool _selRecipePlant;
+    private NutrientComputation? _recipePreview;
+    private int _selIngredientId;
+    private decimal _selQty = 1;
+    private bool _selIngredientPlant;
+    private NutrientComputation? _ingredientPreview;
+    private string _selIngredientUnit => _ingredients.FirstOrDefault(i => i.Id == _selIngredientId)?.Unit ?? "";
+
     // Targets (loaded from UserPreferences, fieldlog defaults)
     private decimal _calMin = 1700, _calMax = 1950, _proteinMin = 130, _proteinMax = 145,
                     _fiberTarget = 30, _ironTarget = 18, _lowFloor = 1600;
@@ -300,6 +472,8 @@
         _lowFloor = await PrefService.GetDecimalAsync("LogLowIntakeFloor", 1600);
 
         _quickItems = await FoodLog.GetQuickAddItemsAsync();
+        _recipes = await RecipeSvc.GetAllRecipesAsync();
+        _ingredients = await IngredientSvc.GetAllAsync();
         await LoadBodyAsync();
         await LoadDayAsync();
     }
@@ -313,6 +487,136 @@
             _entries.Sum(e => e.ProteinG),
             _entries.Sum(e => e.FiberG ?? 0),
             _entries.Sum(e => e.IronMg ?? 0));
+
+        _plannedMeals = await MealSvc.GetMealsForDateAsync(_currentDate);
+        _mealComputations = new();
+        foreach (var meal in _plannedMeals)
+            _mealComputations[meal.Id] = await NutriCalc.ComputeForMealAsync(meal.Id);
+    }
+
+    private static string MealTypeBadge(MealType t) => t switch
+    {
+        MealType.Breakfast => "bg-warning text-dark",
+        MealType.Lunch => "bg-success",
+        _ => "bg-info text-dark",
+    };
+
+    // Appends the uncounted note to the entry name, respecting the 200-char Name limit
+    private static string BuildEntryName(string baseName, NutrientComputation comp)
+    {
+        if (!comp.HasUncounted) return baseName.Length <= 200 ? baseName : baseName[..200];
+        var names = comp.Uncounted.Select(u => u.Name).ToList();
+        var shown = names.Take(3).ToList();
+        var suffix = " — not counted: " + string.Join(", ", shown) + (names.Count > 3 ? "…" : "");
+        var full = baseName + suffix;
+        return full.Length <= 200 ? full : full[..200];
+    }
+
+    private async Task LogPlannedMeal(Meal meal)
+    {
+        if (_loggingMealId == meal.Id || _entries.Any(e => e.MealId == meal.Id)) return;
+        _loggingMealId = meal.Id;
+        try
+        {
+            var comp = _mealComputations.GetValueOrDefault(meal.Id) ?? await NutriCalc.ComputeForMealAsync(meal.Id);
+            await FoodLog.AddEntryAsync(new FoodLogEntry
+            {
+                Date = _currentDate,
+                Name = BuildEntryName($"{meal.Title} ({meal.MealType})", comp),
+                Calories = comp.Calories,
+                ProteinG = comp.ProteinG,
+                FiberG = comp.FiberG,
+                IronMg = comp.IronMg,
+                IsPlant = _plantToggles.GetValueOrDefault(meal.Id),
+                MealId = meal.Id
+            });
+            await LoadDayAsync();
+        }
+        finally
+        {
+            _loggingMealId = null;
+        }
+    }
+
+    private async Task OnRecipeChanged(ChangeEventArgs e)
+    {
+        _selRecipeId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        await RefreshRecipePreview();
+    }
+
+    private async Task OnServingsChanged(ChangeEventArgs e)
+    {
+        _selServings = decimal.TryParse(e.Value?.ToString(), out var s) ? s : 0;
+        await RefreshRecipePreview();
+    }
+
+    private async Task RefreshRecipePreview()
+    {
+        _recipePreview = _selRecipeId > 0 && _selServings > 0
+            ? await NutriCalc.ComputeForRecipeAsync(_selRecipeId, _selServings)
+            : null;
+    }
+
+    private async Task LogRecipe()
+    {
+        if (_selRecipeId == 0 || _selServings <= 0) return;
+        var recipe = _recipes.FirstOrDefault(r => r.Id == _selRecipeId);
+        if (recipe is null) return;
+        var comp = _recipePreview ?? await NutriCalc.ComputeForRecipeAsync(_selRecipeId, _selServings);
+        var servingsText = _selServings % 1 == 0 ? ((int)_selServings).ToString() : _selServings.ToString("0.##");
+        await FoodLog.AddEntryAsync(new FoodLogEntry
+        {
+            Date = _currentDate,
+            Name = BuildEntryName($"{recipe.Name} × {servingsText} serving{(_selServings == 1 ? "" : "s")}", comp),
+            Calories = comp.Calories,
+            ProteinG = comp.ProteinG,
+            FiberG = comp.FiberG,
+            IronMg = comp.IronMg,
+            IsPlant = _selRecipePlant
+        });
+        _selRecipePlant = false;
+        await LoadDayAsync();
+    }
+
+    private async Task OnIngredientChanged(ChangeEventArgs e)
+    {
+        _selIngredientId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        await RefreshIngredientPreview();
+    }
+
+    private async Task OnQtyChanged(ChangeEventArgs e)
+    {
+        _selQty = decimal.TryParse(e.Value?.ToString(), out var q) ? q : 0;
+        await RefreshIngredientPreview();
+    }
+
+    private async Task RefreshIngredientPreview()
+    {
+        _ingredientPreview = _selIngredientId > 0 && _selQty > 0
+            ? await NutriCalc.ComputeForIngredientAsync(_selIngredientId, _selQty)
+            : null;
+    }
+
+    private async Task LogIngredient()
+    {
+        if (_selIngredientId == 0 || _selQty <= 0) return;
+        var ing = _ingredients.FirstOrDefault(i => i.Id == _selIngredientId);
+        if (ing is null) return;
+        var comp = _ingredientPreview ?? await NutriCalc.ComputeForIngredientAsync(_selIngredientId, _selQty);
+        var qtyText = _selQty % 1 == 0 ? ((int)_selQty).ToString() : _selQty.ToString("0.##");
+        await FoodLog.AddEntryAsync(new FoodLogEntry
+        {
+            Date = _currentDate,
+            Name = BuildEntryName($"{ing.Name}, {qtyText} {ing.Unit}", comp),
+            Calories = comp.Calories,
+            ProteinG = comp.ProteinG,
+            FiberG = comp.FiberG,
+            IronMg = comp.IronMg,
+            IsPlant = _selIngredientPlant,
+            IngredientId = ing.Id
+        });
+        _selIngredientPlant = false;
+        await LoadDayAsync();
     }
 
     private async Task LoadBodyAsync()

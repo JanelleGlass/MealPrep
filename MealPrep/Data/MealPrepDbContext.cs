@@ -137,6 +137,7 @@ public class MealPrepDbContext : DbContext
             entity.Property(e => e.Date).IsRequired();
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.HasOne(e => e.Ingredient).WithMany().HasForeignKey(e => e.IngredientId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(e => e.Meal).WithMany().HasForeignKey(e => e.MealId).OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(e => e.Date);
         });
 

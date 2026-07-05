@@ -30,6 +30,7 @@ builder.Services.AddScoped<NutritionService>();
 builder.Services.AddScoped<AnalyticsService>();
 builder.Services.AddScoped<FoodLogService>();
 builder.Services.AddScoped<BodyMeasurementService>();
+builder.Services.AddScoped<NutritionCalcService>();
 
 var app = builder.Build();
 
@@ -193,6 +194,17 @@ using (var scope = app.Services.CreateScope())
     db.Database.ExecuteSqlRaw(@"
         CREATE INDEX IF NOT EXISTS IX_FoodLogEntries_Date
         ON FoodLogEntries (Date);
+    ");
+
+    // Manual migration: add MealId to FoodLogEntries (log-from-plan double-log prevention)
+    try
+    {
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE FoodLogEntries ADD COLUMN MealId INTEGER REFERENCES Meals(Id) ON DELETE SET NULL;");
+    }
+    catch { /* Column already exists */ }
+    db.Database.ExecuteSqlRaw(@"
+        CREATE INDEX IF NOT EXISTS IX_FoodLogEntries_MealId
+        ON FoodLogEntries (MealId);
     ");
 
     // Manual migration: create BodyMeasurements table

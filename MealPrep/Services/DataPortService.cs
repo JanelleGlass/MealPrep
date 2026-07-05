@@ -47,7 +47,7 @@ public class DataPortService
         foreach (var rbe in export.RecipeBookEntries) { rbe.RecipeBook = null; rbe.Recipe = null; }
         foreach (var mrg in export.MealRangeGroups) mrg.Meal = null;
         foreach (var sp in export.StoreProducts) { sp.Store = null; sp.Ingredient = null; }
-        foreach (var fle in export.FoodLogEntries) fle.Ingredient = null;
+        foreach (var fle in export.FoodLogEntries) { fle.Ingredient = null; fle.Meal = null; }
 
         return JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
     }
@@ -114,7 +114,7 @@ public class DataPortService
         var foodLogEntries = await db.FoodLogEntries.AsNoTracking().ToListAsync();
         var bodyMeasurements = await db.BodyMeasurements.AsNoTracking().ToListAsync();
         var quickAddItems = await db.QuickAddItems.AsNoTracking().ToListAsync();
-        foreach (var fle in foodLogEntries) fle.Ingredient = null;
+        foreach (var fle in foodLogEntries) { fle.Ingredient = null; fle.Meal = null; }
         files["daily-log.json"] = JsonSerializer.Serialize(new DailyLogExport
         {
             Version = 1, ExportedAt = now, FoodLogEntries = foodLogEntries,
@@ -621,6 +621,10 @@ public class DataPortService
                         ? ingredientMap[fle.IngredientId.Value]
                         : null;
                     fle.Ingredient = null;
+                    fle.MealId = fle.MealId.HasValue && mealMap.ContainsKey(fle.MealId.Value)
+                        ? mealMap[fle.MealId.Value]
+                        : null;
+                    fle.Meal = null;
                     db.FoodLogEntries.Add(fle);
                 }
                 foreach (var bm in data.BodyMeasurements)
@@ -830,6 +834,10 @@ public class DataPortService
                         ? ingredientMap[fle.IngredientId.Value]
                         : null;
                     fle.Ingredient = null;
+                    fle.MealId = fle.MealId.HasValue && mealMap.ContainsKey(fle.MealId.Value)
+                        ? mealMap[fle.MealId.Value]
+                        : null;
+                    fle.Meal = null;
                     db.FoodLogEntries.Add(fle);
                 }
                 await db.SaveChangesAsync();
