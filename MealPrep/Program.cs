@@ -1,9 +1,6 @@
-using System.Security.Claims;
 using MealPrep.Components;
 using MealPrep.Data;
 using MealPrep.Services;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,17 +31,6 @@ builder.Services.AddScoped<AnalyticsService>();
 builder.Services.AddScoped<FoodLogService>();
 builder.Services.AddScoped<BodyMeasurementService>();
 
-builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-    .AddCookie(options =>
-    {
-        options.LoginPath = "/login";
-        options.ExpireTimeSpan = TimeSpan.FromDays(90);
-        options.SlidingExpiration = true;
-        options.Cookie.Name = "mealprep_auth";
-    });
-builder.Services.AddAuthorization();
-builder.Services.AddCascadingAuthenticationState();
-
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())
@@ -53,37 +39,7 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseStaticFiles();
-app.UseAuthentication();
-app.UseAuthorization();
 app.UseAntiforgery();
-
-// Single-user password login. Password comes from MEALPREP_PASSWORD (dev fallback: "mealprep").
-var appPassword = Environment.GetEnvironmentVariable("MEALPREP_PASSWORD") ?? "mealprep";
-
-app.MapPost("/auth/login", async (HttpContext http) =>
-{
-    var form = await http.Request.ReadFormAsync();
-    var supplied = form["password"].ToString();
-    var ok = System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
-        System.Text.Encoding.UTF8.GetBytes(supplied),
-        System.Text.Encoding.UTF8.GetBytes(appPassword));
-    if (!ok)
-        return Results.Redirect("/login?error=1");
-
-    var identity = new ClaimsIdentity(
-        new[] { new Claim(ClaimTypes.Name, "owner") },
-        CookieAuthenticationDefaults.AuthenticationScheme);
-    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
-        new ClaimsPrincipal(identity),
-        new AuthenticationProperties { IsPersistent = true });
-    return Results.Redirect("/");
-}).AllowAnonymous().DisableAntiforgery();
-
-app.MapGet("/auth/logout", async (HttpContext http) =>
-{
-    await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    return Results.Redirect("/login");
-});
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

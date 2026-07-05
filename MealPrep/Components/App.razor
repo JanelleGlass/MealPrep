@@ -11,11 +11,11 @@
     <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="css/app.css" />
     <link rel="stylesheet" href="MealPrep.styles.css" />
-    <HeadOutlet @rendermode="PageRenderMode" />
+    <HeadOutlet @rendermode="Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer" />
 </head>
 
 <body>
-    <Routes @rendermode="PageRenderMode" />
+    <Routes @rendermode="Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer" />
 
     <div id="blazor-error-ui" data-nosnippet>
         An unhandled error has occurred.
@@ -124,15 +124,3 @@
 </body>
 
 </html>
-
-@code {
-    [CascadingParameter]
-    private HttpContext HttpContext { get; set; } = default!;
-
-    // The login page renders statically (no circuit) so its plain HTML form
-    // can POST cookies; everything else is interactive Blazor Server.
-    private IComponentRenderMode? PageRenderMode =>
-        HttpContext.Request.Path.StartsWithSegments("/login")
-            ? null
-            : Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer;
-}
