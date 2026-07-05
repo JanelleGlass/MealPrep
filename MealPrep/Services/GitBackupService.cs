@@ -127,14 +127,26 @@ public class GitBackupService
 
     public async Task<Dictionary<string, string>> PullBackupFilesAsync(string repo, string token, string basePath)
     {
+        var result = await PullBackupFilesWithShaAsync(repo, token, basePath);
+        return result.Files;
+    }
+
+    public class PullResult
+    {
+        public Dictionary<string, string> Files { get; set; } = new();
+        public string? InboxSha { get; set; }
+    }
+
+    public async Task<PullResult> PullBackupFilesWithShaAsync(string repo, string token, string basePath)
+    {
         if (basePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
         {
             var lastSlash = basePath.LastIndexOf('/');
             basePath = lastSlash >= 0 ? basePath[..lastSlash] : "";
         }
         var folder = string.IsNullOrWhiteSpace(basePath) ? "" : basePath.TrimEnd('/') + "/";
-        var fileNames = new[] { "ingredients.json", "meals.json", "pantry.json", "recipes-and-books.json" };
-        var result = new Dictionary<string, string>();
+        var fileNames = new[] { "ingredients.json", "meals.json", "pantry.json", "recipes-and-books.json", "stores.json", "daily-log.json", "nutrition.json", "mobile-log-inbox.json" };
+        var result = new PullResult();
 
         foreach (var fileName in fileNames)
         {
@@ -156,10 +168,70 @@ public class GitBackupService
                 await response.Content.ReadAsStreamAsync());
             var base64 = doc.GetProperty("content").GetString()!;
             var cleaned = base64.Replace("\n", "");
-            result[fileName] = Encoding.UTF8.GetString(Convert.FromBase64String(cleaned));
+            result.Files[fileName] = Encoding.UTF8.GetString(Convert.FromBase64String(cleaned));
+            if (fileName == "mobile-log-inbox.json")
+                result.InboxSha = doc.GetProperty("sha").GetString();
         }
 
         return result;
+    }
+
+    // Direct commit of all backup files to the default branch (no PR).
+    public async Task<int> CreateBackupCommitAsync(string repo, string token, string basePath, Dictionary<string, string> files)
+    {
+        if (basePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            var lastSlash = basePath.LastIndexOf('/');
+            basePath = lastSlash >= 0 ? basePath[..lastSlash] : "";
+        }
+        var folder = string.IsNullOrWhiteSpace(basePath) ? "" : basePath.TrimEnd('/') + "/";
+
+        int pushed = 0;
+        foreach (var (fileName, content) in files)
+        {
+            await PutFileDirectAsync(repo, token, $"{folder}{fileName}", content,
+                $"Update {fileName} - {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss UTC}", sha: null, resolveSha: true);
+            pushed++;
+        }
+        return pushed;
+    }
+
+    // PUT a single file to the default branch. When sha is provided it is used as the
+    // optimistic-concurrency guard (409/422 on mismatch); with resolveSha the current
+    // sha is looked up first (last-writer-wins).
+    public async Task PutFileDirectAsync(string repo, string token, string path, string content, string message, string? sha, bool resolveSha = false)
+    {
+        var contentsUrl = $"https://api.github.com/repos/{repo}/contents/{path}";
+
+        if (sha is null && resolveSha)
+        {
+            var getRequest = new HttpRequestMessage(HttpMethod.Get, contentsUrl);
+            ConfigureRequest(getRequest, token);
+            var getResponse = await _http.SendAsync(getRequest);
+            if (getResponse.IsSuccessStatusCode)
+            {
+                var existing = await JsonSerializer.DeserializeAsync<JsonElement>(
+                    await getResponse.Content.ReadAsStreamAsync());
+                sha = existing.GetProperty("sha").GetString();
+            }
+        }
+
+        var body = new Dictionary<string, string>
+        {
+            ["message"] = message,
+            ["content"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(content))
+        };
+        if (sha != null) body["sha"] = sha;
+
+        var putRequest = new HttpRequestMessage(HttpMethod.Put, contentsUrl);
+        ConfigureRequest(putRequest, token);
+        putRequest.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        var putResponse = await _http.SendAsync(putRequest);
+        if (!putResponse.IsSuccessStatusCode)
+        {
+            var error = await putResponse.Content.ReadAsStringAsync();
+            throw new Exception($"Failed to write {path} ({putResponse.StatusCode}): {error}");
+        }
     }
 
     // Legacy single-file pull for backward compatibility

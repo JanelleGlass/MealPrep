@@ -128,15 +128,19 @@
 <div class="card mb-4">
     <div class="card-body">
         <h5 class="card-title">GitHub Backup</h5>
-        <p class="card-text">Sync your data with GitHub. Creates a pull request for review before merging. Configure repository settings in <a href="/settings">Settings</a>.</p>
+        <p class="card-text">Sync your data with GitHub. Push sends your data to the repo (also feeds the mobile app); Pull restores from the repo and merges any entries logged on your phone. Configure repository settings in <a href="/settings">Settings</a>.</p>
         <div class="d-flex gap-2">
-            <button class="btn btn-primary" @onclick="CreatePR" disabled="@(_busy || !_gitConfigured)">
+            <button class="btn btn-primary" @onclick="PushBackup" disabled="@(_busy || !_gitConfigured)">
                 @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                Create Backup PR
+                Push Backup
             </button>
             <button class="btn btn-warning" @onclick="PullFromGitHub" disabled="@(_busy || !_gitConfigured)">
                 @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
                 Pull from GitHub
+            </button>
+            <button class="btn btn-outline-secondary" @onclick="CreatePR" disabled="@(_busy || !_gitConfigured)">
+                @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                Backup as PR
             </button>
         </div>
         @if (!_gitConfigured)
@@ -215,17 +219,69 @@
         }
     }
 
+    private async Task PushBackup()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var files = await DataPortService.ExportSplitAsync();
+            var pushed = await GitBackupService.CreateBackupCommitAsync(_gitRepo, _gitToken, _gitPath, files);
+            _message = $"Backup pushed to GitHub ({pushed} files).";
+            _alertClass = "alert-success";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Push failed: {ex.Message}";
+            _alertClass = "alert-danger";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
     private async Task PullFromGitHub()
     {
         _busy = true;
         _message = null;
         try
         {
-            var files = await GitBackupService.PullBackupFilesAsync(_gitRepo, _gitToken, _gitPath);
+            var pull = await GitBackupService.PullBackupFilesWithShaAsync(_gitRepo, _gitToken, _gitPath);
+            var files = pull.Files;
             if (files.Count == 0)
                 throw new Exception("No backup files found in the repository.");
-            await DataPortService.ImportSplitAsync(files);
-            _message = $"Data restored from GitHub successfully ({files.Count} files).";
+            var merged = await DataPortService.ImportSplitAsync(files);
+
+            var inboxNote = "";
+            if (merged > 0 && pull.InboxSha != null)
+            {
+                try
+                {
+                    // Clear only the inbox version we merged (sha-guarded); if the phone
+                    // appended in the meantime this fails and a re-pull picks it up.
+                    var folder = _gitPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                        ? (_gitPath.Contains('/') ? _gitPath[.._gitPath.LastIndexOf('/')] : "")
+                        : _gitPath;
+                    var prefix = string.IsNullOrWhiteSpace(folder) ? "" : folder.TrimEnd('/') + "/";
+                    await GitBackupService.PutFileDirectAsync(_gitRepo, _gitToken,
+                        $"{prefix}mobile-log-inbox.json",
+                        "{\n  \"version\": 1,\n  \"entries\": []\n}\n",
+                        $"Clear mobile inbox after merge - {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss UTC}",
+                        sha: pull.InboxSha);
+                    inboxNote = $" {merged} phone entr{(merged == 1 ? "y" : "ies")} merged; inbox cleared.";
+                }
+                catch
+                {
+                    inboxNote = $" {merged} phone entr{(merged == 1 ? "y" : "ies")} merged, but new phone entries arrived during the pull — pull again to merge them.";
+                }
+            }
+            else if (merged > 0)
+            {
+                inboxNote = $" {merged} phone entr{(merged == 1 ? "y" : "ies")} merged.";
+            }
+
+            _message = $"Data restored from GitHub successfully ({files.Count} files).{inboxNote}";
             _alertClass = "alert-success";
         }
         catch (Exception ex)

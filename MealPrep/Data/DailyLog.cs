@@ -14,6 +14,7 @@ public class FoodLogEntry
     public Ingredient? Ingredient { get; set; }
     public int? MealId { get; set; }
     public Meal? Meal { get; set; }
+    public string? ClientId { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 
@@ -23,6 +24,7 @@ public class BodyMeasurement
     public DateTime Date { get; set; }
     public decimal WaistIn { get; set; }
     public decimal HeightIn { get; set; }
+    public string? ClientId { get; set; }
 }
 
 public class QuickAddItem

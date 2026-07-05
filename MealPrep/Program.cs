@@ -45,6 +45,19 @@ app.UseAntiforgery();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
+// Dev-only test hooks for the sync pipeline (never mapped in Production)
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/dev/export-split", async (DataPortService port) =>
+        Results.Json(await port.ExportSplitAsync()));
+    app.MapPost("/dev/import-split", async (DataPortService port, HttpContext http) =>
+    {
+        var files = await System.Text.Json.JsonSerializer.DeserializeAsync<Dictionary<string, string>>(http.Request.Body);
+        var merged = await port.ImportSplitAsync(files!);
+        return Results.Json(new { merged });
+    });
+}
+
 // Ensure database is created (same manual-migration pattern the MAUI app used)
 using (var scope = app.Services.CreateScope())
 {
@@ -206,6 +219,18 @@ using (var scope = app.Services.CreateScope())
         CREATE INDEX IF NOT EXISTS IX_FoodLogEntries_MealId
         ON FoodLogEntries (MealId);
     ");
+
+    // Manual migration: add ClientId to FoodLogEntries and BodyMeasurements (mobile sync dedupe)
+    try
+    {
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE FoodLogEntries ADD COLUMN ClientId TEXT;");
+    }
+    catch { /* Column already exists */ }
+    try
+    {
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE BodyMeasurements ADD COLUMN ClientId TEXT;");
+    }
+    catch { /* Column already exists */ }
 
     // Manual migration: create BodyMeasurements table
     db.Database.ExecuteSqlRaw(@"

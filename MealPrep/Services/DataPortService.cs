@@ -121,6 +121,79 @@ public class DataPortService
             BodyMeasurements = bodyMeasurements, QuickAddItems = quickAddItems
         }, opts);
 
+        // Nutrition rows referenced by ingredients (for the mobile companion; not the full USDA table)
+        var linkedNutritionIds = ingredients.Where(i => i.NutritionId.HasValue).Select(i => i.NutritionId!.Value).Distinct().ToList();
+        var linkedNutrition = await db.Nutritions.AsNoTracking().Where(n => linkedNutritionIds.Contains(n.Id)).ToListAsync();
+        files["nutrition.json"] = JsonSerializer.Serialize(new NutritionExport
+        {
+            Version = 1, ExportedAt = now, Nutritions = linkedNutrition
+        }, opts);
+
+        // Precomputed macros: per-meal totals and per-recipe per-serving values, so the
+        // mobile app never has to reimplement unit->gram conversion
+        var mealsWithNutrition = await db.Meals.AsNoTracking()
+            .Include(m => m.Ingredients).ThenInclude(mi => mi.Ingredient)!.ThenInclude(i => i!.Nutrition)
+            .Include(m => m.Recipe)!.ThenInclude(r => r!.Ingredients).ThenInclude(ri => ri.Ingredient)!.ThenInclude(i => i!.Nutrition)
+            .ToListAsync();
+        var mealMacros = new List<ComputedMealMacros>();
+        foreach (var meal in mealsWithNutrition)
+        {
+            NutrientComputation comp;
+            if (meal.Recipe != null && meal.Recipe.Ingredients.Any())
+            {
+                int recipeServings = meal.Recipe.Servings > 0 ? meal.Recipe.Servings : 1;
+                int mealServings = meal.Servings > 0 ? meal.Servings : 1;
+                decimal scale = (decimal)mealServings / recipeServings;
+                comp = NutritionCalcService.Compute(meal.Recipe.Ingredients
+                    .Where(ri => ri.Ingredient != null)
+                    .Select(ri => (ri.Ingredient!, ri.Quantity * scale)));
+            }
+            else
+            {
+                comp = NutritionCalcService.Compute(meal.Ingredients
+                    .Where(mi => mi.Ingredient != null)
+                    .Select(mi => (mi.Ingredient!, mi.Quantity)));
+            }
+            mealMacros.Add(new ComputedMealMacros
+            {
+                MealId = meal.Id,
+                Calories = comp.Calories, ProteinG = comp.ProteinG, FiberG = comp.FiberG, IronMg = comp.IronMg,
+                HasApprox = comp.HasApprox, UncountedNote = comp.UncountedNote
+            });
+        }
+        var recipesWithNutrition = await db.Recipes.AsNoTracking()
+            .Include(r => r.Ingredients).ThenInclude(ri => ri.Ingredient)!.ThenInclude(i => i!.Nutrition)
+            .ToListAsync();
+        var recipeMacros = new List<ComputedRecipeMacros>();
+        foreach (var recipe in recipesWithNutrition)
+        {
+            int servings = recipe.Servings > 0 ? recipe.Servings : 1;
+            var comp = NutritionCalcService.Compute(recipe.Ingredients
+                .Where(ri => ri.Ingredient != null)
+                .Select(ri => (ri.Ingredient!, ri.Quantity / servings)));
+            recipeMacros.Add(new ComputedRecipeMacros
+            {
+                RecipeId = recipe.Id,
+                PerServingCalories = comp.Calories, PerServingProteinG = comp.ProteinG,
+                PerServingFiberG = comp.FiberG, PerServingIronMg = comp.IronMg,
+                HasApprox = comp.HasApprox, UncountedNote = comp.UncountedNote
+            });
+        }
+        files["computed-macros.json"] = JsonSerializer.Serialize(new ComputedMacrosExport
+        {
+            Version = 1, ExportedAt = now, Meals = mealMacros, Recipes = recipeMacros
+        }, opts);
+
+        // Ring targets so the mobile app matches the PC
+        var prefKeys = new[] { "LogCalMin", "LogCalMax", "LogProteinMin", "LogProteinMax", "LogFiberTarget", "LogIronTarget", "LogLowIntakeFloor", "LogHeightIn" };
+        var prefs = await db.UserPreferences.AsNoTracking()
+            .Where(p => prefKeys.Contains(p.Key))
+            .ToDictionaryAsync(p => p.Key, p => (string?)p.Value);
+        files["settings.json"] = JsonSerializer.Serialize(new SettingsExport
+        {
+            Version = 1, ExportedAt = now, Preferences = prefs
+        }, opts);
+
         return files;
     }
 
@@ -429,7 +502,7 @@ public class DataPortService
         }
     }
 
-    public async Task ImportSplitAsync(Dictionary<string, string> files)
+    public async Task<int> ImportSplitAsync(Dictionary<string, string> files)
     {
         using var db = await _factory.CreateDbContextAsync();
         using var transaction = await db.Database.BeginTransactionAsync();
@@ -640,7 +713,63 @@ public class DataPortService
                 await db.SaveChangesAsync();
             }
 
+            // 7. Merge mobile inbox entries (idempotent via ClientId)
+            int merged = 0;
+            if (files.TryGetValue("mobile-log-inbox.json", out var inboxJson) && !string.IsNullOrWhiteSpace(inboxJson))
+            {
+                var inboxOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var inbox = JsonSerializer.Deserialize<MobileLogInbox>(inboxJson, inboxOpts);
+                if (inbox?.Entries != null)
+                {
+                    var existingFoodClientIds = (await db.FoodLogEntries
+                        .Where(e => e.ClientId != null).Select(e => e.ClientId!).ToListAsync()).ToHashSet();
+                    var existingBodyClientIds = (await db.BodyMeasurements
+                        .Where(b => b.ClientId != null).Select(b => b.ClientId!).ToListAsync()).ToHashSet();
+
+                    foreach (var entry in inbox.Entries)
+                    {
+                        if (string.IsNullOrWhiteSpace(entry.ClientId)) continue;
+                        if (!DateTime.TryParse(entry.Date, out var date)) continue;
+                        date = date.Date;
+
+                        if (string.Equals(entry.Type, "body", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (existingBodyClientIds.Contains(entry.ClientId)) continue;
+                            db.BodyMeasurements.Add(new BodyMeasurement
+                            {
+                                Date = date,
+                                WaistIn = entry.WaistIn ?? 0,
+                                HeightIn = entry.HeightIn ?? 0,
+                                ClientId = entry.ClientId
+                            });
+                        }
+                        else
+                        {
+                            if (existingFoodClientIds.Contains(entry.ClientId)) continue;
+                            db.FoodLogEntries.Add(new FoodLogEntry
+                            {
+                                Date = date,
+                                Name = string.IsNullOrWhiteSpace(entry.Name) ? "(unnamed)" : entry.Name!,
+                                Calories = entry.Calories ?? 0,
+                                ProteinG = entry.ProteinG ?? 0,
+                                FiberG = entry.FiberG,
+                                IronMg = entry.IronMg,
+                                IsPlant = entry.IsPlant ?? false,
+                                MealId = entry.MealId.HasValue && mealMap.ContainsKey(entry.MealId.Value)
+                                    ? mealMap[entry.MealId.Value]
+                                    : null,
+                                ClientId = entry.ClientId,
+                                CreatedAt = entry.CreatedAt ?? DateTime.Now
+                            });
+                        }
+                        merged++;
+                    }
+                    await db.SaveChangesAsync();
+                }
+            }
+
             await transaction.CommitAsync();
+            return merged;
         }
         catch
         {
@@ -931,6 +1060,73 @@ public class DailyLogExport
     public List<FoodLogEntry> FoodLogEntries { get; set; } = new();
     public List<BodyMeasurement> BodyMeasurements { get; set; } = new();
     public List<QuickAddItem> QuickAddItems { get; set; } = new();
+}
+
+public class NutritionExport
+{
+    public int Version { get; set; }
+    public DateTime ExportedAt { get; set; }
+    public List<Nutrition> Nutritions { get; set; } = new();
+}
+
+public class ComputedMealMacros
+{
+    public int MealId { get; set; }
+    public decimal Calories { get; set; }
+    public decimal ProteinG { get; set; }
+    public decimal FiberG { get; set; }
+    public decimal IronMg { get; set; }
+    public bool HasApprox { get; set; }
+    public string? UncountedNote { get; set; }
+}
+
+public class ComputedRecipeMacros
+{
+    public int RecipeId { get; set; }
+    public decimal PerServingCalories { get; set; }
+    public decimal PerServingProteinG { get; set; }
+    public decimal PerServingFiberG { get; set; }
+    public decimal PerServingIronMg { get; set; }
+    public bool HasApprox { get; set; }
+    public string? UncountedNote { get; set; }
+}
+
+public class ComputedMacrosExport
+{
+    public int Version { get; set; }
+    public DateTime ExportedAt { get; set; }
+    public List<ComputedMealMacros> Meals { get; set; } = new();
+    public List<ComputedRecipeMacros> Recipes { get; set; } = new();
+}
+
+public class SettingsExport
+{
+    public int Version { get; set; }
+    public DateTime ExportedAt { get; set; }
+    public Dictionary<string, string?> Preferences { get; set; } = new();
+}
+
+public class MobileLogInbox
+{
+    public int Version { get; set; }
+    public List<MobileLogEntry> Entries { get; set; } = new();
+}
+
+public class MobileLogEntry
+{
+    public string? ClientId { get; set; }
+    public string? Type { get; set; }
+    public string? Date { get; set; }
+    public string? Name { get; set; }
+    public decimal? Calories { get; set; }
+    public decimal? ProteinG { get; set; }
+    public decimal? FiberG { get; set; }
+    public decimal? IronMg { get; set; }
+    public bool? IsPlant { get; set; }
+    public int? MealId { get; set; }
+    public decimal? WaistIn { get; set; }
+    public decimal? HeightIn { get; set; }
+    public DateTime? CreatedAt { get; set; }
 }
 
 public class MonthExport
