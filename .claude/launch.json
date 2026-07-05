@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mealprep-web",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "F:\\Repos\\MealPrep\\MealPrep\\MealPrep.csproj", "--launch-profile", "http"],
+      "port": 5217
+    }
+  ]
+}

@@ -6,12 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MealPrep</title>
     <base href="/" />
+    <link rel="icon" href="favicon.png" />
+    <link rel="apple-touch-icon" href="favicon.png" />
     <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="MealPrep.styles.css" />
+    <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 
 <body>
-    <div id="app">Loading...</div>
+    <Routes @rendermode="PageRenderMode" />
 
     <div id="blazor-error-ui" data-nosnippet>
         An unhandled error has occurred.
@@ -19,7 +23,7 @@
         <span class="dismiss">🗙</span>
     </div>
 
-    <script src="_framework/blazor.webview.js"></script>
+    <script src="_framework/blazor.web.js"></script>
     <script src="lib/chartjs/chart.umd.min.js"></script>
     <script>
         window.trendCharts = {
@@ -104,6 +108,31 @@
             }
         };
     </script>
+    <script>
+        window.downloadFile = (fileName, content) => {
+            const blob = new Blob([content], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+    </script>
 </body>
 
 </html>
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    // The login page renders statically (no circuit) so its plain HTML form
+    // can POST cookies; everything else is interactive Blazor Server.
+    private IComponentRenderMode? PageRenderMode =>
+        HttpContext.Request.Path.StartsWithSegments("/login")
+            ? null
+            : Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer;
+}

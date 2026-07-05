@@ -20,10 +20,11 @@
     <div class="card-body">
         <h5 class="card-title">Import Data</h5>
         <p class="card-text text-danger"><strong>Warning:</strong> Importing will replace all existing data. Export your current data first if you want to keep it.</p>
-        <button class="btn btn-warning" @onclick="ImportData" disabled="@_busy">
+        <label class="btn btn-warning mb-0 @(_busy ? "disabled" : "")">
             @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
             Import from JSON
-        </button>
+            <InputFile OnChange="ImportData" accept=".json" hidden disabled="@_busy" />
+        </label>
     </div>
 </div>
 
@@ -74,10 +75,11 @@
                 <input type="number" class="form-control" @bind="_importTargetYear" min="2000" max="2100" style="width:100px" />
             </div>
             <div class="col-auto">
-                <button class="btn btn-warning" @onclick="ImportMonth" disabled="@_busy">
+                <label class="btn btn-warning mb-0 @(_busy ? "disabled" : "")">
                     @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
                     Import Month
-                </button>
+                    <InputFile OnChange="ImportMonth" accept=".json" hidden disabled="@_busy" />
+                </label>
             </div>
         </div>
     </div>
@@ -115,10 +117,11 @@
     <div class="card-body">
         <h5 class="card-title">Import Recipe Book</h5>
         <p class="card-text">Import a recipe book file. If a book with the same name exists, recipes are merged into it. New recipes and ingredients are created as needed.</p>
-        <button class="btn btn-warning" @onclick="ImportBook" disabled="@_busy">
+        <label class="btn btn-warning mb-0 @(_busy ? "disabled" : "")">
             @if (_busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
             Import Book
-        </button>
+            <InputFile OnChange="ImportBook" accept=".json" hidden disabled="@_busy" />
+        </label>
     </div>
 </div>
 
@@ -238,6 +241,15 @@
 
     private record GitSettings(string? Repo, string? Token, string? Path);
 
+    private const long MaxImportBytes = 100 * 1024 * 1024;
+
+    private async Task<string> ReadUploadAsync(InputFileChangeEventArgs e)
+    {
+        using var stream = e.File.OpenReadStream(MaxImportBytes);
+        using var reader = new StreamReader(stream);
+        return await reader.ReadToEndAsync();
+    }
+
     private async Task ExportData()
     {
         _busy = true;
@@ -246,16 +258,7 @@
         {
             var json = await DataPortService.ExportAsync();
             var fileName = $"MealPrep-Backup-{DateTime.Now:yyyy-MM-dd-HHmmss}.json";
-
-            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-            var filePath = Path.Combine(FileSystem.CacheDirectory, fileName);
-            await File.WriteAllTextAsync(filePath, json);
-
-            await Share.Default.RequestAsync(new ShareFileRequest
-            {
-                Title = "Export MealPrep Data",
-                File = new ShareFile(filePath)
-            });
+            await JS.InvokeVoidAsync("downloadFile", fileName, json);
 
             _message = "Data exported successfully.";
             _alertClass = "alert-success";
@@ -271,35 +274,13 @@
         }
     }
 
-    private async Task ImportData()
+    private async Task ImportData(InputFileChangeEventArgs e)
     {
         _busy = true;
         _message = null;
         try
         {
-            var result = await FilePicker.Default.PickAsync(new PickOptions
-            {
-                PickerTitle = "Select MealPrep backup file",
-                FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
-                {
-                    { DevicePlatform.WinUI, new[] { ".json" } },
-                    { DevicePlatform.Android, new[] { "application/json" } },
-                    { DevicePlatform.iOS, new[] { "public.json" } },
-                    { DevicePlatform.macOS, new[] { "public.json" } },
-                    { DevicePlatform.MacCatalyst, new[] { "public.json" } }
-                })
-            });
-
-            if (result == null)
-            {
-                _busy = false;
-                return;
-            }
-
-            using var stream = await result.OpenReadAsync();
-            using var reader = new StreamReader(stream);
-            var json = await reader.ReadToEndAsync();
-
+            var json = await ReadUploadAsync(e);
             await DataPortService.ImportAsync(json);
 
             _message = "Data imported successfully. Your data has been restored.";
@@ -325,15 +306,7 @@
             var json = await DataPortService.ExportMonthAsync(_exportYear, _exportMonth);
             var monthName = new DateTime(_exportYear, _exportMonth, 1).ToString("MMMM");
             var fileName = $"MealPrep-{monthName}-{_exportYear}.json";
-
-            var filePath = Path.Combine(FileSystem.CacheDirectory, fileName);
-            await File.WriteAllTextAsync(filePath, json);
-
-            await Share.Default.RequestAsync(new ShareFileRequest
-            {
-                Title = $"Export {monthName} {_exportYear}",
-                File = new ShareFile(filePath)
-            });
+            await JS.InvokeVoidAsync("downloadFile", fileName, json);
 
             _message = $"Month exported successfully ({monthName} {_exportYear}).";
             _alertClass = "alert-success";
@@ -349,35 +322,13 @@
         }
     }
 
-    private async Task ImportMonth()
+    private async Task ImportMonth(InputFileChangeEventArgs e)
     {
         _busy = true;
         _message = null;
         try
         {
-            var result = await FilePicker.Default.PickAsync(new PickOptions
-            {
-                PickerTitle = "Select month export file",
-                FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
-                {
-                    { DevicePlatform.WinUI, new[] { ".json" } },
-                    { DevicePlatform.Android, new[] { "application/json" } },
-                    { DevicePlatform.iOS, new[] { "public.json" } },
-                    { DevicePlatform.macOS, new[] { "public.json" } },
-                    { DevicePlatform.MacCatalyst, new[] { "public.json" } }
-                })
-            });
-
-            if (result == null)
-            {
-                _busy = false;
-                return;
-            }
-
-            using var stream = await result.OpenReadAsync();
-            using var reader = new StreamReader(stream);
-            var json = await reader.ReadToEndAsync();
-
+            var json = await ReadUploadAsync(e);
             var copied = await DataPortService.ImportMonthAsync(json, _importTargetYear, _importTargetMonth);
             var monthName = new DateTime(_importTargetYear, _importTargetMonth, 1).ToString("MMMM");
 
@@ -404,15 +355,7 @@
             var json = await DataPortService.ExportBookAsync(_exportBookId);
             var book = _books?.FirstOrDefault(b => b.Id == _exportBookId);
             var fileName = $"MealPrep-Book-{book?.Name ?? "Unknown"}-{DateTime.Now:yyyy-MM-dd-HHmmss}.json";
-
-            var filePath = Path.Combine(FileSystem.CacheDirectory, fileName);
-            await File.WriteAllTextAsync(filePath, json);
-
-            await Share.Default.RequestAsync(new ShareFileRequest
-            {
-                Title = $"Export Recipe Book: {book?.Name}",
-                File = new ShareFile(filePath)
-            });
+            await JS.InvokeVoidAsync("downloadFile", fileName, json);
 
             _message = $"Recipe book exported successfully ({book?.Name}).";
             _alertClass = "alert-success";
@@ -428,35 +371,13 @@
         }
     }
 
-    private async Task ImportBook()
+    private async Task ImportBook(InputFileChangeEventArgs e)
     {
         _busy = true;
         _message = null;
         try
         {
-            var result = await FilePicker.Default.PickAsync(new PickOptions
-            {
-                PickerTitle = "Select recipe book file",
-                FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
-                {
-                    { DevicePlatform.WinUI, new[] { ".json" } },
-                    { DevicePlatform.Android, new[] { "application/json" } },
-                    { DevicePlatform.iOS, new[] { "public.json" } },
-                    { DevicePlatform.macOS, new[] { "public.json" } },
-                    { DevicePlatform.MacCatalyst, new[] { "public.json" } }
-                })
-            });
-
-            if (result == null)
-            {
-                _busy = false;
-                return;
-            }
-
-            using var stream = await result.OpenReadAsync();
-            using var reader = new StreamReader(stream);
-            var json = await reader.ReadToEndAsync();
-
+            var json = await ReadUploadAsync(e);
             var bookName = await DataPortService.ImportBookAsync(json);
 
             _message = $"Recipe book imported successfully: \"{bookName}\".";

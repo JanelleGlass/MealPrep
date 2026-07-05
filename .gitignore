@@ -13,3 +13,6 @@
 mealprep.db
 mealprep.db-shm
 mealprep.db-wal
+
+# Web app local data directory
+data/

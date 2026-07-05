@@ -1,0 +1,30 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@layout MealPrep.Components.Layout.EmptyLayout
+
+<PageTitle>Sign in — MealPrep</PageTitle>
+
+<div class="d-flex align-items-center justify-content-center" style="min-height:100vh;background:var(--bs-body-bg);">
+    <div class="card shadow" style="width:100%;max-width:360px;">
+        <div class="card-body p-4">
+            <h4 class="card-title text-center mb-1">🥗 MealPrep</h4>
+            <p class="text-muted text-center mb-4" style="font-size:13px;">Enter your password to continue</p>
+            @if (HasError)
+            {
+                <div class="alert alert-danger py-2" style="font-size:13px;">Wrong password — try again.</div>
+            }
+            <form method="post" action="/auth/login">
+                <input type="password" name="password" class="form-control mb-3" placeholder="Password"
+                       autofocus autocomplete="current-password" />
+                <button type="submit" class="btn btn-primary w-100">Sign in</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    private bool HasError => !string.IsNullOrEmpty(Error);
+}
