@@ -3,6 +3,12 @@ using MealPrep.Data;
 using MealPrep.Services;
 using Microsoft.EntityFrameworkCore;
 
+if (args.Length >= 3 && args[0] == "golden-vectors")
+{
+    await MealPrep.Tools.GoldenVectors.GenerateAsync(args[1], args[2]);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
